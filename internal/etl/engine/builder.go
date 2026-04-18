@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	apiconn "github.com/rinjold/go-etl-studio/internal/connectors/api"
 	csvconn "github.com/rinjold/go-etl-studio/internal/connectors/csv"
 	pgconn "github.com/rinjold/go-etl-studio/internal/connectors/postgres"
 	"github.com/rinjold/go-etl-studio/internal/etl/contracts"
@@ -20,23 +21,15 @@ func BuildExecutor(ctx context.Context, def pipeline.Definition, pool *pgxpool.P
 	if err != nil {
 		return Executor{}, fmt.Errorf("build extractor: %w", err)
 	}
-
 	loader, err := buildLoader(ctx, def, pool)
 	if err != nil {
 		return Executor{}, fmt.Errorf("build loader: %w", err)
 	}
-
 	chain, err := buildTransformChain(def.Steps)
 	if err != nil {
 		return Executor{}, fmt.Errorf("build transformers: %w", err)
 	}
-
-	return Executor{
-		Extractor:   extractor,
-		Transformer: chain,
-		Loader:      loader,
-		Log:         log,
-	}, nil
+	return Executor{Extractor: extractor, Transformer: chain, Loader: loader, Log: log}, nil
 }
 
 func buildExtractor(ctx context.Context, def pipeline.Definition, pool *pgxpool.Pool) (contracts.Extractor, error) {
@@ -64,6 +57,13 @@ func buildExtractor(ctx context.Context, def pipeline.Definition, pool *pgxpool.
 		}
 		return pgconn.NewExtractor(cfg), nil
 
+	case pipeline.SourceAPI:
+		var cfg apiconn.ExtractorConfig
+		if err := json.Unmarshal(def.SourceConfig, &cfg); err != nil {
+			return nil, err
+		}
+		return apiconn.NewExtractor(cfg), nil
+
 	default:
 		return nil, fmt.Errorf("unknown source type: %s", def.SourceType)
 	}
@@ -80,7 +80,6 @@ func buildLoader(ctx context.Context, def pipeline.Definition, pool *pgxpool.Poo
 			cfg.Pool = pool
 		}
 		return pgconn.NewLoader(cfg), nil
-
 	default:
 		return nil, fmt.Errorf("unknown target type: %s", def.TargetType)
 	}
@@ -90,7 +89,6 @@ func buildTransformChain(steps []pipeline.TransformStep) (contracts.Transformer,
 	if len(steps) == 0 {
 		return transformers.Noop{}, nil
 	}
-
 	chain := transformers.Chain{}
 	for _, step := range steps {
 		t, err := buildTransformer(step)
@@ -110,7 +108,6 @@ func buildTransformer(step pipeline.TransformStep) (contracts.Transformer, error
 			return nil, err
 		}
 		return transformers.Mapper{Mapping: cfg.Mapping}, nil
-
 	case "filter":
 		var cfg pipeline.FilterConfig
 		if err := json.Unmarshal(step.Config, &cfg); err != nil {
@@ -118,14 +115,9 @@ func buildTransformer(step pipeline.TransformStep) (contracts.Transformer, error
 		}
 		rules := make([]transformers.FilterRule, len(cfg.Rules))
 		for i, r := range cfg.Rules {
-			rules[i] = transformers.FilterRule{
-				Column:   r.Column,
-				Operator: transformers.Operator(r.Operator),
-				Value:    r.Value,
-			}
+			rules[i] = transformers.FilterRule{Column: r.Column, Operator: transformers.Operator(r.Operator), Value: r.Value}
 		}
 		return transformers.Filter{Rules: rules}, nil
-
 	case "caster":
 		var cfg pipeline.CasterConfig
 		if err := json.Unmarshal(step.Config, &cfg); err != nil {
@@ -133,13 +125,9 @@ func buildTransformer(step pipeline.TransformStep) (contracts.Transformer, error
 		}
 		rules := make([]transformers.CastRule, len(cfg.Rules))
 		for i, r := range cfg.Rules {
-			rules[i] = transformers.CastRule{
-				Column: r.Column,
-				CastTo: transformers.CastType(r.CastTo),
-			}
+			rules[i] = transformers.CastRule{Column: r.Column, CastTo: transformers.CastType(r.CastTo)}
 		}
 		return transformers.Caster{Rules: rules}, nil
-
 	default:
 		return nil, fmt.Errorf("unknown transformer type: %s", step.Type)
 	}

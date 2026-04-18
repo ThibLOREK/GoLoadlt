@@ -24,6 +24,8 @@ func NewServerApp() (*ServerApp, error) {
 
 	router := handlers.NewRouter(
 		container.Logger,
+		container.Config.JWTSecret,
+		container.AuthService,
 		container.PipelineService,
 		container.RunService,
 		container.ScheduleService,

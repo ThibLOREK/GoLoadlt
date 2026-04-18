@@ -8,6 +8,7 @@ type TargetType string
 const (
 	SourceCSV      SourceType = "csv"
 	SourcePostgres SourceType = "postgres"
+	SourceAPI      SourceType = "api"
 
 	TargetPostgres TargetType = "postgres"
 	TargetCSV      TargetType = "csv"
@@ -27,6 +28,19 @@ type PostgresSourceConfig struct {
 	Where     string   `json:"where"`
 }
 
+type APISourceConfig struct {
+	URL            string            `json:"url"`
+	Method         string            `json:"method"`
+	Headers        map[string]string `json:"headers"`
+	DataPath       string            `json:"data_path"`
+	Pagination     string            `json:"pagination"`
+	PageParam      string            `json:"page_param"`
+	LimitParam     string            `json:"limit_param"`
+	PageSize       int               `json:"page_size"`
+	MaxPages       int               `json:"max_pages"`
+	TimeoutSeconds int               `json:"timeout_seconds"`
+}
+
 type PostgresTargetConfig struct {
 	DSN       string   `json:"dsn"`
 	Schema    string   `json:"schema"`
@@ -36,7 +50,7 @@ type PostgresTargetConfig struct {
 }
 
 type TransformStep struct {
-	Type   string          `json:"type"` // "mapper" | "filter" | "caster"
+	Type   string          `json:"type"`
 	Config json.RawMessage `json:"config"`
 }
 
