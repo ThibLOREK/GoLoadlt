@@ -8,8 +8,9 @@ import (
 
 func TestEvalBool(t *testing.T) {
 	row := contracts.DataRow{
-		"amount": 120,
+		"amount":  120,
 		"country": "FR",
+		"qty":     0,
 	}
 
 	cases := []struct {
@@ -19,8 +20,13 @@ func TestEvalBool(t *testing.T) {
 		{"amount > 100", true},
 		{"amount < 100", false},
 		{"amount >= 120", true},
+		{"amount <= 119", false},
+		{"amount == 120", true},
+		{"amount != 0", true},
+		{"qty == 0", true},
 		{"country == 'FR'", true},
 		{"country != 'DE'", true},
+		{"country == 'DE'", false},
 	}
 
 	for _, tc := range cases {
@@ -29,15 +35,15 @@ func TestEvalBool(t *testing.T) {
 			t.Fatalf("EvalBool(%q) error: %v", tc.expr, err)
 		}
 		if got != tc.want {
-			t.Fatalf("EvalBool(%q) = %v, want %v", tc.expr, got, tc.want)
+			t.Errorf("EvalBool(%q) = %v, want %v", tc.expr, got, tc.want)
 		}
 	}
 }
 
 func TestEvalValue(t *testing.T) {
 	row := contracts.DataRow{
-		"amount": 100,
-		"tax": 20,
+		"amount": float64(100),
+		"tax":    float64(20),
 		"country": "FR",
 	}
 
@@ -45,10 +51,13 @@ func TestEvalValue(t *testing.T) {
 		expr string
 		want any
 	}{
-		{"amount * 1.2", 120.0},
-		{"amount + tax", 120.0},
+		{"amount * 1.2", float64(120)},
+		{"amount + tax", float64(120)},
+		{"amount - tax", float64(80)},
+		{"amount / tax", float64(5)},
 		{"country", "FR"},
 		{"'EU'", "EU"},
+		{"42", float64(42)},
 	}
 
 	for _, tc := range cases {
@@ -57,7 +66,7 @@ func TestEvalValue(t *testing.T) {
 			t.Fatalf("EvalValue(%q) error: %v", tc.expr, err)
 		}
 		if got != tc.want {
-			t.Fatalf("EvalValue(%q) = %#v, want %#v", tc.expr, got, tc.want)
+			t.Errorf("EvalValue(%q) = %#v, want %#v", tc.expr, got, tc.want)
 		}
 	}
 }

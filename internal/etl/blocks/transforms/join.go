@@ -12,11 +12,14 @@ func init() {
 	blocks.Register("transform.join", func() contracts.Block { return &Join{} })
 }
 
-// Join effectue une jointure entre deux flux.
-// Paramètres :
-//   leftKey   : colonne clé du flux gauche
-//   rightKey  : colonne clé du flux droit
-//   type      : inner (défaut) | left | right
+// Join joint deux flux (left = Inputs[0], right = Inputs[1]) sur une clé.
+// Paramètres:
+//   - leftKey  : colonne clé du flux gauche  (ex: "user_id")
+//   - rightKey : colonne clé du flux droit   (ex: "id")
+//   - type     : inner | left | right | full  (défaut: inner)
+//
+// Stratégie : hash-join — le flux droit est chargé en mémoire (build phase),
+// puis le flux gauche est streamé ligne par ligne (probe phase).
 type Join struct{}
 
 func (b *Join) Type() string { return "transform.join" }
@@ -27,41 +30,107 @@ func (b *Join) Run(bctx *contracts.BlockContext) error {
 	}
 	leftKey := bctx.Params["leftKey"]
 	rightKey := bctx.Params["rightKey"]
-	joinType := bctx.Params["type"]
-	if joinType == "" { joinType = "inner" }
+	joinType := strings.ToLower(bctx.Params["type"])
+	if joinType == "" {
+		joinType = "inner"
+	}
 	if leftKey == "" || rightKey == "" {
-		return fmt.Errorf("transform.join: paramètres 'leftKey' et 'rightKey' obligatoires")
+		return fmt.Errorf("transform.join: params 'leftKey' et 'rightKey' requis")
+	}
+	switch joinType {
+	case "inner", "left", "right", "full":
+	default:
+		return fmt.Errorf("transform.join: type '%s' non supporté (inner|left|right|full)", joinType)
 	}
 
-	// Charger le flux droit en mémoire (build side).
-	rightIndex := make(map[string][]contracts.DataRow)
+	// --- Phase build : charger le flux droit en mémoire ---
+	rightMap := make(map[string][]contracts.DataRow)
 	for row := range bctx.Inputs[1].Ch {
-		key := fmt.Sprintf("%v", row[rightKey])
-		rightIndex[key] = append(rightIndex[key], row)
+		k := fmt.Sprintf("%v", row[rightKey])
+		rightMap[k] = append(rightMap[k], row)
 	}
 
-	// Streamer le flux gauche et joindre.
-	for leftRow := range bctx.Inputs[0].Ch {
-		key := fmt.Sprintf("%v", leftRow[leftKey])
-		rightRows, found := rightIndex[key]
+	// Pour full join : on track les clés droites émises.
+	emittedRight := make(map[string]bool)
 
-		if found {
-			for _, rightRow := range rightRows {
-				merged := make(contracts.DataRow, len(leftRow)+len(rightRow))
-				for k, v := range leftRow { merged[k] = v }
-				for k, v := range rightRow {
-					colName := k
-					if _, exists := leftRow[k]; exists && k != rightKey {
-						colName = "right_" + k
-					}
-					merged[colName] = v
-				}
-				for _, out := range bctx.Outputs { out.Ch <- merged }
-			}
-		} else if strings.ToLower(joinType) == "left" {
-			for _, out := range bctx.Outputs { out.Ch <- leftRow }
+	close := func() {
+		for _, out := range bctx.Outputs {
+			close(out.Ch)
 		}
 	}
-	for _, out := range bctx.Outputs { close(out.Ch) }
-	return nil
+
+	emit := func(row contracts.DataRow) error {
+		for _, out := range bctx.Outputs {
+			select {
+			case out.Ch <- row:
+			case <-bctx.Ctx.Done():
+				return bctx.Ctx.Err()
+			}
+		}
+		return nil
+	}
+
+	// --- Phase probe : streamé sur le flux gauche ---
+	for {
+		select {
+		case <-bctx.Ctx.Done():
+			close()
+			return bctx.Ctx.Err()
+		case leftRow, ok := <-bctx.Inputs[0].Ch:
+			if !ok {
+				// Pour full join : émettre les lignes droites non matchées.
+				if joinType == "full" || joinType == "right" {
+					for k, rows := range rightMap {
+						if emittedRight[k] {
+							continue
+						}
+						for _, r := range rows {
+							if err := emit(r); err != nil {
+								return err
+							}
+						}
+					}
+				}
+				close()
+				return nil
+			}
+
+			k := fmt.Sprintf("%v", leftRow[leftKey])
+			rightRows, matched := rightMap[k]
+
+			if matched {
+				emittedRight[k] = true
+				for _, rightRow := range rightRows {
+					merged := mergeRows(leftRow, rightRow, rightKey)
+					if err := emit(merged); err != nil {
+						return err
+					}
+				}
+			} else if joinType == "left" || joinType == "full" {
+				// Ligne gauche sans correspondance.
+				if err := emit(leftRow); err != nil {
+					return err
+				}
+			}
+		}
+	}
+}
+
+// mergeRows fusionne deux lignes en préfixant les clés droites dupliquées de "right_".
+func mergeRows(left, right contracts.DataRow, rightKey string) contracts.DataRow {
+	merged := make(contracts.DataRow, len(left)+len(right))
+	for k, v := range left {
+		merged[k] = v
+	}
+	for k, v := range right {
+		if k == rightKey {
+			continue // la clé droite est déjà dans left sous leftKey
+		}
+		if _, exists := merged[k]; exists {
+			merged["right_"+k] = v
+		} else {
+			merged[k] = v
+		}
+	}
+	return merged
 }
