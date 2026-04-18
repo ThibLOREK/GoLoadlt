@@ -1,24 +1,20 @@
 package app
 
 import (
+	"context"
 	"time"
-
-	"github.com/rinjold/go-etl-studio/internal/config"
-	"github.com/rinjold/go-etl-studio/internal/logger"
 )
 
 type WorkerApp struct {
-	cfg config.Config
+	container *Container
 }
 
 func NewWorkerApp() (*WorkerApp, error) {
-	cfg, err := config.Load()
+	container, err := BuildContainer(context.Background())
 	if err != nil {
 		return nil, err
 	}
-
-	_ = logger.New(cfg.AppEnv)
-	return &WorkerApp{cfg: cfg}, nil
+	return &WorkerApp{container: container}, nil
 }
 
 func (w *WorkerApp) Run() error {

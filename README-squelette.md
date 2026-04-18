@@ -7,15 +7,20 @@
 - logger Zerolog
 - contrats ETL de base
 - moteur ETL minimal
-- DTO et modèles initiaux
 - Docker Compose PostgreSQL + Redis
-- exemple de migration SQL
+- migration SQL enrichie pour `pipelines`
+- repository PostgreSQL pour les pipelines
+- service applicatif `PipelineService`
+- CRUD HTTP complet pour les pipelines
 
-## Démarrage
-1. Copier `configs/.env.example` vers `.env`
-2. Lancer `docker compose -f deploy/docker/docker-compose.yml up -d`
-3. Exécuter `go mod tidy`
-4. Lancer `go run ./cmd/server`
+## Endpoints disponibles
+- `GET /health`
+- `GET /api/v1/pipelines`
+- `POST /api/v1/pipelines`
+- `GET /api/v1/pipelines/{pipelineID}`
+- `PUT /api/v1/pipelines/{pipelineID}`
+- `DELETE /api/v1/pipelines/{pipelineID}`
+- `POST /api/v1/pipelines/{pipelineID}/runs`
 
 ## Prochaine étape
-Implémenter les entités métier complètes, le repository PostgreSQL, puis le CRUD pipeline persistant.
+Implémenter les `runs`, brancher un vrai worker, puis ajouter un premier connecteur source CSV et un loader PostgreSQL.

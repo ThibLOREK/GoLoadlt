@@ -8,30 +8,30 @@ import (
 	"github.com/rinjold/go-etl-studio/api/handlers"
 	"github.com/rinjold/go-etl-studio/api/middleware"
 	"github.com/rinjold/go-etl-studio/internal/config"
-	"github.com/rinjold/go-etl-studio/internal/logger"
 )
 
 type ServerApp struct {
-	cfg    config.Config
-	server *http.Server
+	cfg       config.Config
+	server    *http.Server
+	container *Container
 }
 
 func NewServerApp() (*ServerApp, error) {
-	cfg, err := config.Load()
+	ctx := context.Background()
+	container, err := BuildContainer(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	log := logger.New(cfg.AppEnv)
-	router := handlers.NewRouter(log)
+	router := handlers.NewRouter(container.Logger, container.PipelineService)
 	middleware.Apply(router)
 
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
+		Addr:    fmt.Sprintf(":%d", container.Config.HTTPPort),
 		Handler: router,
 	}
 
-	return &ServerApp{cfg: cfg, server: server}, nil
+	return &ServerApp{cfg: container.Config, server: server, container: container}, nil
 }
 
 func (a *ServerApp) Run() error {
@@ -39,5 +39,8 @@ func (a *ServerApp) Run() error {
 }
 
 func (a *ServerApp) Shutdown(ctx context.Context) error {
+	if a.container != nil && a.container.PostgresPool != nil {
+		a.container.PostgresPool.Close()
+	}
 	return a.server.Shutdown(ctx)
 }

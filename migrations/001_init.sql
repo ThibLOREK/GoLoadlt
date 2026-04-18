@@ -3,5 +3,8 @@ CREATE TABLE IF NOT EXISTS pipelines (
     name TEXT NOT NULL,
     description TEXT,
     status TEXT NOT NULL DEFAULT 'draft',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    source_type TEXT NOT NULL DEFAULT 'unknown',
+    target_type TEXT NOT NULL DEFAULT 'unknown',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
