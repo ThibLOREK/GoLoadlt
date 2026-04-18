@@ -8,16 +8,15 @@ import (
 	"time"
 
 	"github.com/rinjold/go-etl-studio/api/handlers"
-	"github.com/rinjold/go-etl-studio/api/middleware"
 	"github.com/rinjold/go-etl-studio/internal/config"
 	"github.com/rinjold/go-etl-studio/internal/telemetry"
 )
 
 type ServerApp struct {
-	cfg          config.Config
-	server       *http.Server
-	container    *Container
-	telProvider  *telemetry.Provider
+	cfg         config.Config
+	server      *http.Server
+	container   *Container
+	telProvider *telemetry.Provider
 }
 
 func NewServerApp() (*ServerApp, error) {
@@ -40,9 +39,8 @@ func NewServerApp() (*ServerApp, error) {
 		container.RunService,
 		container.ScheduleService,
 	)
-	middleware.Apply(router)
 
-	// Observability endpoints
+	// Observability endpoints (registered after NewRouter which handles its own middlewares)
 	router.Handle("/metrics", telemetry.MetricsHandler())
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
