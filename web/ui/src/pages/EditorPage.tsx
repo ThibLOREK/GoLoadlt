@@ -16,20 +16,21 @@ import '@xyflow/react/dist/style.css'
 
 import { getProject, updateProject, getCatalogue, runProject } from '@/api/client'
 import { useEditorStore } from '@/store/editorStore'
+import { useAutoSave } from '@/hooks/useAutoSave'
+import { useNodeValidation } from '@/hooks/useNodeValidation'
 import BlockPalette from '@/components/editor/BlockPalette'
 import NodeConfigPanel from '@/components/editor/NodeConfigPanel'
 import ETLBlockNode from '@/components/editor/ETLBlockNode'
 import Button from '@/components/ui/Button'
-import { Save, Play, ArrowLeft } from 'lucide-react'
+import { Save, Play, ArrowLeft, AlertTriangle } from 'lucide-react'
 import type { ETLNode, ETLEdge, Project } from '@/types/api'
 
 const nodeTypes = { etlBlock: ETLBlockNode }
 
-// Convertit les nodes ETL (Go) en nodes React Flow
-function toRFNodes(etlNodes: ETLNode[]): Node[] {
+function toRFNodes(etlNodes: ETLNode[]) {
   return etlNodes.map(n => ({
     id: n.id,
-    type: 'etlBlock',
+    type: 'etlBlock' as const,
     position: { x: n.posX ?? 100, y: n.posY ?? 100 },
     data: {
       label: n.label ?? n.type,
@@ -40,7 +41,6 @@ function toRFNodes(etlNodes: ETLNode[]): Node[] {
   }))
 }
 
-// Convertit les edges ETL en edges React Flow
 function toRFEdges(etlEdges: ETLEdge[]) {
   return etlEdges.map((e, i) => ({
     id: `e-${i}-${e.from}-${e.to}`,
@@ -52,28 +52,36 @@ function toRFEdges(etlEdges: ETLEdge[]) {
   }))
 }
 
-// Convertit les nodes React Flow en nodes ETL (pour la sauvegarde)
 function toETLNodes(rfNodes: Node[]): ETLNode[] {
   return rfNodes.map(n => ({
     id: n.id,
     type: n.data.blockType as string,
     label: n.data.label as string,
     connectionRef: n.data.connRef as string,
-    posX: n.position.x,
-    posY: n.position.y,
-    params: Object.entries(n.data.params as Record<string, string> ?? {}).map(([k, v]) => ({ name: k, value: v })),
+    posX: Math.round(n.position.x),
+    posY: Math.round(n.position.y),
+    params: Object.entries((n.data.params as Record<string, string>) ?? {}).map(([k, v]) => ({ name: k, value: v })),
   }))
 }
 
 export default function EditorPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const navigate = useNavigate()
-  const { project, setProject, setCatalogue, selectedNodeId, selectNode, isDirty, markDirty, markClean } = useEditorStore()
+  const { project, setProject, setCatalogue, setNodes: storeSetNodes, selectedNodeId, selectNode, isDirty, markDirty, markClean } = useEditorStore()
 
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
 
-  // Charger le projet et le catalogue
+  // Validation globale
+  const validationMap = useNodeValidation(nodes)
+  const invalidCount = [...validationMap.values()].filter(v => !v.valid).length
+
+  // Sync nodes dans le store pour ETLBlockNode (qui y accède via useEditorStore)
+  useEffect(() => { storeSetNodes(nodes) }, [nodes])
+
+  // Auto-save
+  useAutoSave(projectId, nodes, edges)
+
   useEffect(() => {
     if (!projectId) return
     Promise.all([getProject(projectId), getCatalogue()]).then(([p, cat]) => {
@@ -105,17 +113,20 @@ export default function EditorPage() {
   }
 
   const handleRun = async () => {
+    if (invalidCount > 0) {
+      const ok = confirm(`${invalidCount} bloc(s) ont des paramètres manquants. Exécuter quand même ?`)
+      if (!ok) return
+    }
     await handleSave()
     if (!projectId) return
     try {
-      const report = await runProject(projectId)
+      const report = await runProject(projectId) as any
       alert(report.success ? `✅ Succès en ${report.duration}` : `❌ Erreur d'exécution`)
     } catch (e: any) {
-      alert(`❌ ${e.message}`)
+      alert(`❌ ${e.response?.data?.error ?? e.message}`)
     }
   }
 
-  // Drop d'un bloc depuis la palette
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
@@ -135,10 +146,8 @@ export default function EditorPage() {
 
   return (
     <div className="flex h-screen">
-      {/* Palette gauche */}
       <BlockPalette />
 
-      {/* Canvas central */}
       <div className="flex-1 flex flex-col">
         {/* Toolbar */}
         <div className="flex items-center gap-2 px-4 py-2 bg-gray-900 border-b border-gray-800">
@@ -146,14 +155,29 @@ export default function EditorPage() {
             <ArrowLeft size={14} /> Projets
           </Button>
           <span className="text-sm font-semibold text-gray-300 ml-2">{project?.name}</span>
-          {isDirty && <span className="text-xs text-yellow-400 ml-1">• non sauvegardé</span>}
+
+          {/* Badge dirty */}
+          {isDirty && (
+            <span className="text-xs text-yellow-400 ml-1 animate-pulse">↻ sauvegarde...</span>
+          )}
+
+          {/* Badge validation globale */}
+          {invalidCount > 0 && (
+            <span className="flex items-center gap-1 text-xs text-red-400 ml-2">
+              <AlertTriangle size={12} />
+              {invalidCount} bloc{invalidCount > 1 ? 's' : ''} incomplet{invalidCount > 1 ? 's' : ''}
+            </span>
+          )}
+          {invalidCount === 0 && nodes.length > 0 && (
+            <span className="text-xs text-green-400 ml-2">✓ Projet valide</span>
+          )}
+
           <div className="ml-auto flex gap-2">
             <Button size="sm" variant="ghost" onClick={handleSave}><Save size={14} /> Sauvegarder</Button>
-            <Button size="sm" onClick={handleRun}><Play size={14} /> Exécuter</Button>
+            <Button size="sm" onClick={handleRun} disabled={nodes.length === 0}><Play size={14} /> Exécuter</Button>
           </div>
         </div>
 
-        {/* React Flow canvas */}
         <div className="flex-1" onDrop={onDrop} onDragOver={e => e.preventDefault()}>
           <ReactFlow
             nodes={nodes}
@@ -175,7 +199,6 @@ export default function EditorPage() {
         </div>
       </div>
 
-      {/* Panneau de config droite */}
       {selectedNodeId && <NodeConfigPanel nodeId={selectedNodeId} nodes={nodes} setNodes={setNodes} />}
     </div>
   )

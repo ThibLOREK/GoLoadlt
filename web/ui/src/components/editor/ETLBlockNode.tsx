@@ -1,6 +1,8 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import Badge from '@/components/ui/Badge'
 import { useEditorStore } from '@/store/editorStore'
+import { useNodeValidation } from '@/hooks/useNodeValidation'
+import { AlertTriangle, CheckCircle2 } from 'lucide-react'
 
 const categoryColors: Record<string, string> = {
   input:     'border-blue-600 bg-blue-950',
@@ -11,30 +13,49 @@ const categoryColors: Record<string, string> = {
 }
 
 export default function ETLBlockNode({ id, data, selected }: NodeProps) {
-  const { catalogue } = useEditorStore()
+  const { catalogue, nodes } = useEditorStore()
   const meta = catalogue.find(b => b.type === data.blockType)
-  const category = meta?.category ?? 'transform'
+  const category = (meta as any)?.category ?? 'transform'
   const colorCls = categoryColors[category] ?? 'border-gray-600 bg-gray-900'
 
+  const validationMap = useNodeValidation(nodes)
+  const validation = validationMap.get(id)
+  const isValid = validation?.valid ?? true
+
   return (
-    <div className={`min-w-[140px] border-2 rounded-xl px-3 py-2 shadow-lg transition-all ${
-      selected ? 'ring-2 ring-brand-500 ring-offset-1 ring-offset-transparent' : ''
-    } ${colorCls}`}>
+    <div
+      className={`min-w-[150px] border-2 rounded-xl px-3 py-2.5 shadow-lg transition-all ${
+        selected ? 'ring-2 ring-brand-500 ring-offset-1 ring-offset-transparent' : ''
+      } ${
+        !isValid ? 'border-red-500 bg-red-950/40' : colorCls
+      }`}
+    >
       {/* Port d'entrée */}
-      {(meta?.minInputs ?? 1) > 0 && (
+      {((meta as any)?.minInputs ?? 1) > 0 && (
         <Handle type="target" position={Position.Left} style={{ background: '#60a5fa', width: 10, height: 10, left: -6 }} />
       )}
 
       <div className="flex flex-col gap-1">
-        <div className="text-xs font-bold text-gray-100 truncate max-w-[120px]">{data.label as string}</div>
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-xs font-bold text-gray-100 truncate max-w-[110px]">{data.label as string}</span>
+          {isValid
+            ? <CheckCircle2 size={12} className="text-green-400 flex-shrink-0" />
+            : <AlertTriangle size={12} className="text-red-400 flex-shrink-0 animate-pulse" />
+          }
+        </div>
         <Badge category={category} />
         {data.connRef && (
-          <div className="text-xs text-gray-500 truncate">&#128279; {data.connRef as string}</div>
+          <div className="text-xs text-gray-500 truncate">🔗 {data.connRef as string}</div>
+        )}
+        {!isValid && (
+          <div className="text-xs text-red-400 mt-0.5">
+            Manquant : {validation?.missing.join(', ')}
+          </div>
         )}
       </div>
 
       {/* Port de sortie */}
-      {(meta?.minOutputs ?? 1) > 0 && (
+      {((meta as any)?.minOutputs ?? 1) > 0 && (
         <Handle type="source" position={Position.Right} style={{ background: '#a78bfa', width: 10, height: 10, right: -6 }} />
       )}
     </div>
