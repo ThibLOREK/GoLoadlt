@@ -17,13 +17,12 @@ type ServerApp struct {
 }
 
 func NewServerApp() (*ServerApp, error) {
-	ctx := context.Background()
-	container, err := BuildContainer(ctx)
+	container, err := BuildContainer(context.Background())
 	if err != nil {
 		return nil, err
 	}
 
-	router := handlers.NewRouter(container.Logger, container.PipelineService)
+	router := handlers.NewRouter(container.Logger, container.PipelineService, container.RunService)
 	middleware.Apply(router)
 
 	server := &http.Server{
@@ -35,11 +34,12 @@ func NewServerApp() (*ServerApp, error) {
 }
 
 func (a *ServerApp) Run() error {
+	a.container.Logger.Info().Str("addr", a.server.Addr).Msg("server started")
 	return a.server.ListenAndServe()
 }
 
 func (a *ServerApp) Shutdown(ctx context.Context) error {
-	if a.container != nil && a.container.PostgresPool != nil {
+	if a.container.PostgresPool != nil {
 		a.container.PostgresPool.Close()
 	}
 	return a.server.Shutdown(ctx)

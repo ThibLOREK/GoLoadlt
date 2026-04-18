@@ -16,6 +16,7 @@ type Container struct {
 	Logger          zerolog.Logger
 	PostgresPool    *pgxpool.Pool
 	PipelineService *services.PipelineService
+	RunService      *services.RunService
 }
 
 func BuildContainer(ctx context.Context) (*Container, error) {
@@ -31,13 +32,17 @@ func BuildContainer(ctx context.Context) (*Container, error) {
 		return nil, err
 	}
 
-	repo := storage.NewPipelineRepository(pool)
-	pipelineService := services.NewPipelineService(repo)
+	pipelineRepo := storage.NewPipelineRepository(pool)
+	runRepo := storage.NewRunRepository(pool)
+
+	pipelineService := services.NewPipelineService(pipelineRepo)
+	runService := services.NewRunService(runRepo, pipelineRepo)
 
 	return &Container{
 		Config:          cfg,
 		Logger:          log,
 		PostgresPool:    pool,
 		PipelineService: pipelineService,
+		RunService:      runService,
 	}, nil
 }
