@@ -2,62 +2,61 @@ version: "3.9"
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
+    container_name: goloadit-postgres
     environment:
-      POSTGRES_USER: etl
-      POSTGRES_PASSWORD: etl
-      POSTGRES_DB: etl_studio
+      POSTGRES_DB: goloadit
+      POSTGRES_USER: goloadit
+      POSTGRES_PASSWORD: goloadit_dev
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7
-    ports:
-      - "6379:6379"
-
-  prometheus:
-    image: prom/prometheus:v2.51.0
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-    depends_on:
-      - server
-
-  grafana:
-    image: grafana/grafana:10.4.0
-    ports:
-      - "3001:3000"
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
-    volumes:
-      - grafana_data:/var/lib/grafana
-    depends_on:
-      - prometheus
+      - ../../migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U goloadit"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   server:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.server
+    container_name: goloadit-server
     ports:
       - "8080:8080"
-    env_file: ../../configs/.env.example
+    environment:
+      - APP_ENV=dev
+      - DB_DSN=postgres://goloadit:goloadit_dev@postgres:5432/goloadit?sslmode=disable
+      - PROJECTS_DIR=/data/projects
+      - CONNECTIONS_DIR=/data/connections
+      - LOG_LEVEL=debug
+    volumes:
+      - goloadit_data:/data
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
   worker:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.worker
-    env_file: ../../configs/.env.example
+    container_name: goloadit-worker
+    environment:
+      - APP_ENV=dev
+      - DB_DSN=postgres://goloadit:goloadit_dev@postgres:5432/goloadit?sslmode=disable
+      - PROJECTS_DIR=/data/projects
+      - CONNECTIONS_DIR=/data/connections
+      - LOG_LEVEL=debug
+    volumes:
+      - goloadit_data:/data
     depends_on:
-      - postgres
-      - redis
-      - server
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres_data:
-  grafana_data:
+  goloadit_data:
