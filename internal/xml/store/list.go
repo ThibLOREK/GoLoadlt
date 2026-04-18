@@ -12,19 +12,20 @@ func (s *ProjectStore) ProjectsDir() string {
 }
 
 // ListAll charge et retourne tous les projets du store.
+// Retourne toujours un slice non-nil pour que JSON encode [] et non null.
 func (s *ProjectStore) ListAll() ([]*contracts.Project, error) {
 	entries, err := os.ReadDir(s.projectsDir)
 	if err != nil {
-		return nil, err
+		return []*contracts.Project{}, err
 	}
-	var projects []*contracts.Project
+	projects := make([]*contracts.Project, 0)
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		p, err := s.Load(e.Name())
 		if err != nil {
-			continue // projet sans fichier XML valide, on l'ignore
+			continue
 		}
 		projects = append(projects, p)
 	}
