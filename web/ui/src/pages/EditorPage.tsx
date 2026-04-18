@@ -1,0 +1,182 @@
+import { useEffect, useCallback } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  MiniMap,
+  addEdge,
+  useNodesState,
+  useEdgesState,
+  type Connection as RFConnection,
+  type Node,
+  BackgroundVariant,
+} from '@xyflow/react'
+import '@xyflow/react/dist/style.css'
+
+import { getProject, updateProject, getCatalogue, runProject } from '@/api/client'
+import { useEditorStore } from '@/store/editorStore'
+import BlockPalette from '@/components/editor/BlockPalette'
+import NodeConfigPanel from '@/components/editor/NodeConfigPanel'
+import ETLBlockNode from '@/components/editor/ETLBlockNode'
+import Button from '@/components/ui/Button'
+import { Save, Play, ArrowLeft } from 'lucide-react'
+import type { ETLNode, ETLEdge, Project } from '@/types/api'
+
+const nodeTypes = { etlBlock: ETLBlockNode }
+
+// Convertit les nodes ETL (Go) en nodes React Flow
+function toRFNodes(etlNodes: ETLNode[]): Node[] {
+  return etlNodes.map(n => ({
+    id: n.id,
+    type: 'etlBlock',
+    position: { x: n.posX ?? 100, y: n.posY ?? 100 },
+    data: {
+      label: n.label ?? n.type,
+      blockType: n.type,
+      connRef: n.connectionRef ?? '',
+      params: Object.fromEntries((n.params ?? []).map(p => [p.name, p.value])),
+    },
+  }))
+}
+
+// Convertit les edges ETL en edges React Flow
+function toRFEdges(etlEdges: ETLEdge[]) {
+  return etlEdges.map((e, i) => ({
+    id: `e-${i}-${e.from}-${e.to}`,
+    source: e.from,
+    target: e.to,
+    sourceHandle: e.fromPort ?? null,
+    targetHandle: e.toPort ?? null,
+    style: { stroke: '#4f7bff', strokeWidth: 2 },
+  }))
+}
+
+// Convertit les nodes React Flow en nodes ETL (pour la sauvegarde)
+function toETLNodes(rfNodes: Node[]): ETLNode[] {
+  return rfNodes.map(n => ({
+    id: n.id,
+    type: n.data.blockType as string,
+    label: n.data.label as string,
+    connectionRef: n.data.connRef as string,
+    posX: n.position.x,
+    posY: n.position.y,
+    params: Object.entries(n.data.params as Record<string, string> ?? {}).map(([k, v]) => ({ name: k, value: v })),
+  }))
+}
+
+export default function EditorPage() {
+  const { projectId } = useParams<{ projectId: string }>()
+  const navigate = useNavigate()
+  const { project, setProject, setCatalogue, selectedNodeId, selectNode, isDirty, markDirty, markClean } = useEditorStore()
+
+  const [nodes, setNodes, onNodesChange] = useNodesState([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState([])
+
+  // Charger le projet et le catalogue
+  useEffect(() => {
+    if (!projectId) return
+    Promise.all([getProject(projectId), getCatalogue()]).then(([p, cat]) => {
+      setProject(p)
+      setCatalogue(cat)
+      setNodes(toRFNodes(p.nodes ?? []))
+      setEdges(toRFEdges(p.edges ?? []))
+    })
+  }, [projectId])
+
+  const onConnect = useCallback(
+    (conn: RFConnection) => {
+      setEdges(eds => addEdge({ ...conn, style: { stroke: '#4f7bff', strokeWidth: 2 } }, eds))
+      markDirty()
+    },
+    [setEdges]
+  )
+
+  const handleSave = async () => {
+    if (!project || !projectId) return
+    const updated: Project = {
+      ...project,
+      nodes: toETLNodes(nodes),
+      edges: edges.map(e => ({ from: e.source, to: e.target, fromPort: e.sourceHandle ?? '', toPort: e.targetHandle ?? '' })),
+    }
+    await updateProject(projectId, updated)
+    setProject(updated)
+    markClean()
+  }
+
+  const handleRun = async () => {
+    await handleSave()
+    if (!projectId) return
+    try {
+      const report = await runProject(projectId)
+      alert(report.success ? `✅ Succès en ${report.duration}` : `❌ Erreur d'exécution`)
+    } catch (e: any) {
+      alert(`❌ ${e.message}`)
+    }
+  }
+
+  // Drop d'un bloc depuis la palette
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      const blockType = e.dataTransfer.getData('application/goloadit-block')
+      if (!blockType) return
+      const bounds = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      const position = { x: e.clientX - bounds.left - 75, y: e.clientY - bounds.top - 20 }
+      const id = `node-${Date.now()}`
+      setNodes(nds => [
+        ...nds,
+        { id, type: 'etlBlock', position, data: { label: blockType.split('.').pop() ?? blockType, blockType, connRef: '', params: {} } },
+      ])
+      markDirty()
+    },
+    [setNodes]
+  )
+
+  return (
+    <div className="flex h-screen">
+      {/* Palette gauche */}
+      <BlockPalette />
+
+      {/* Canvas central */}
+      <div className="flex-1 flex flex-col">
+        {/* Toolbar */}
+        <div className="flex items-center gap-2 px-4 py-2 bg-gray-900 border-b border-gray-800">
+          <Button size="sm" variant="ghost" onClick={() => navigate('/projects')}>
+            <ArrowLeft size={14} /> Projets
+          </Button>
+          <span className="text-sm font-semibold text-gray-300 ml-2">{project?.name}</span>
+          {isDirty && <span className="text-xs text-yellow-400 ml-1">• non sauvegardé</span>}
+          <div className="ml-auto flex gap-2">
+            <Button size="sm" variant="ghost" onClick={handleSave}><Save size={14} /> Sauvegarder</Button>
+            <Button size="sm" onClick={handleRun}><Play size={14} /> Exécuter</Button>
+          </div>
+        </div>
+
+        {/* React Flow canvas */}
+        <div className="flex-1" onDrop={onDrop} onDragOver={e => e.preventDefault()}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={(changes) => { onNodesChange(changes); markDirty() }}
+            onEdgesChange={(changes) => { onEdgesChange(changes); markDirty() }}
+            onConnect={onConnect}
+            onNodeClick={(_, node) => selectNode(node.id)}
+            onPaneClick={() => selectNode(null)}
+            nodeTypes={nodeTypes}
+            fitView
+            deleteKeyCode="Delete"
+            style={{ background: '#0a0d14' }}
+          >
+            <Background variant={BackgroundVariant.Dots} color="#1e2433" />
+            <Controls />
+            <MiniMap nodeColor="#4f7bff" maskColor="rgba(0,0,0,0.7)" style={{ background: '#0f1117' }} />
+          </ReactFlow>
+        </div>
+      </div>
+
+      {/* Panneau de config droite */}
+      {selectedNodeId && <NodeConfigPanel nodeId={selectedNodeId} nodes={nodes} setNodes={setNodes} />}
+    </div>
+  )
+}
