@@ -11,10 +11,10 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/rinjold/go-etl-studio/internal/connections/manager"
+	connresolver "github.com/rinjold/go-etl-studio/internal/connections/resolver"
 	"github.com/rinjold/go-etl-studio/internal/etl/engine"
 	"github.com/rinjold/go-etl-studio/internal/xml/store"
 
-	// Enregistrement de tous les blocs.
 	_ "github.com/rinjold/go-etl-studio/internal/etl/blocks/sources"
 	_ "github.com/rinjold/go-etl-studio/internal/etl/blocks/targets"
 	_ "github.com/rinjold/go-etl-studio/internal/etl/blocks/transforms"
@@ -65,8 +65,6 @@ func runPendingJobs(
 	mgr *manager.Manager,
 	exec *engine.Executor,
 ) {
-	// Lire les projets marqués comme "pending" dans un fichier d'index simple.
-	// Pour le MVP le worker exécute les projets dont un fichier .run existe.
 	entries, _ := os.ReadDir(ps.ProjectsDir())
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -82,8 +80,12 @@ func runPendingJobs(
 			log.Error().Str("project", e.Name()).Err(err).Msg("chargement projet")
 			continue
 		}
-		// Injecter les DSN résolus dans les params des blocs sources/targets.
-		injectDSNs(project, mgr)
+		if err := engine.InjectResolvedConnections(project, func(connID string) (*connresolver.ResolvedConn, error) {
+			return connresolver.Resolve(mgr, connID)
+		}); err != nil {
+			log.Error().Str("project", project.ID).Err(err).Msg("résolution connexions")
+			continue
+		}
 
 		log.Info().Str("project", project.ID).Msg("exécution projet")
 		report, err := exec.Execute(ctx, project)
@@ -96,12 +98,6 @@ func runPendingJobs(
 				Msg("projet terminé")
 		}
 	}
-}
-
-// injectDSNs résout les connexions référencées et injecte le DSN dans les params des blocs.
-func injectDSNs(project interface{ GetNodes() interface{} }, mgr *manager.Manager) {
-	// L'injection est gérée au niveau du runner via le resolver.
-	// Cette fonction est un placeholder pour l'évolution vers la résolution dynamique.
 }
 
 func getEnv(key, fallback string) string {
