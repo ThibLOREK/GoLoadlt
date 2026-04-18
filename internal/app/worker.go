@@ -27,15 +27,21 @@ func (w *WorkerApp) Run(ctx context.Context) error {
 	log := w.container.Logger.With().Str("component", "worker").Logger()
 	log.Info().Msg("worker started")
 
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	jobTicker := time.NewTicker(5 * time.Second)
+	cronTicker := time.NewTicker(30 * time.Second)
+	defer jobTicker.Stop()
+	defer cronTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			log.Info().Msg("worker stopping")
 			return nil
-		case <-ticker.C:
+		case <-cronTicker.C:
+			if err := w.container.ScheduleService.Tick(ctx); err != nil {
+				log.Error().Err(err).Msg("scheduler tick failed")
+			}
+		case <-jobTicker.C:
 			w.processPendingRuns(ctx)
 		}
 	}
@@ -93,7 +99,6 @@ func (w *WorkerApp) processPendingRuns(ctx context.Context) {
 
 		runLog.Info().Msg("executing pipeline")
 		result := executor.Execute(ctx)
-
 		_ = runRepo.UpdateCounts(ctx, j.id, result.RecordsRead, result.RecordsLoaded)
 
 		if result.Err != nil {

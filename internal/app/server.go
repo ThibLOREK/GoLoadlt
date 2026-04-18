@@ -22,7 +22,12 @@ func NewServerApp() (*ServerApp, error) {
 		return nil, err
 	}
 
-	router := handlers.NewRouter(container.Logger, container.PipelineService, container.RunService)
+	router := handlers.NewRouter(
+		container.Logger,
+		container.PipelineService,
+		container.RunService,
+		container.ScheduleService,
+	)
 	middleware.Apply(router)
 
 	server := &http.Server{

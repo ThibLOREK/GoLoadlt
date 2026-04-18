@@ -17,6 +17,7 @@ type Container struct {
 	PostgresPool    *pgxpool.Pool
 	PipelineService *services.PipelineService
 	RunService      *services.RunService
+	ScheduleService *services.ScheduleService
 }
 
 func BuildContainer(ctx context.Context) (*Container, error) {
@@ -34,9 +35,11 @@ func BuildContainer(ctx context.Context) (*Container, error) {
 
 	pipelineRepo := storage.NewPipelineRepository(pool)
 	runRepo := storage.NewRunRepository(pool)
+	scheduleRepo := storage.NewScheduleRepository(pool)
 
 	pipelineService := services.NewPipelineService(pipelineRepo)
 	runService := services.NewRunService(runRepo, pipelineRepo)
+	scheduleService := services.NewScheduleService(scheduleRepo, runService)
 
 	return &Container{
 		Config:          cfg,
@@ -44,5 +47,6 @@ func BuildContainer(ctx context.Context) (*Container, error) {
 		PostgresPool:    pool,
 		PipelineService: pipelineService,
 		RunService:      runService,
+		ScheduleService: scheduleService,
 	}, nil
 }

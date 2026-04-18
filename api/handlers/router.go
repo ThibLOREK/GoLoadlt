@@ -8,7 +8,12 @@ import (
 	"github.com/rs/zerolog"
 )
 
-func NewRouter(log zerolog.Logger, pipelineService *services.PipelineService, runService *services.RunService) *chi.Mux {
+func NewRouter(
+	log zerolog.Logger,
+	pipelineService *services.PipelineService,
+	runService *services.RunService,
+	scheduleService *services.ScheduleService,
+) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -27,6 +32,10 @@ func NewRouter(log zerolog.Logger, pipelineService *services.PipelineService, ru
 			pr.Post("/{pipelineID}/runs", ScheduleRun(runService))
 			pr.Get("/{pipelineID}/runs", ListRuns(runService))
 			pr.Get("/{pipelineID}/runs/{runID}", GetRun(runService))
+
+			pr.Put("/{pipelineID}/schedule", UpsertSchedule(scheduleService))
+			pr.Get("/{pipelineID}/schedule", GetSchedule(scheduleService))
+			pr.Delete("/{pipelineID}/schedule", DeleteSchedule(scheduleService))
 		})
 	})
 
