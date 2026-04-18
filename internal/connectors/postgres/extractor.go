@@ -9,12 +9,13 @@ import (
 )
 
 type ExtractorConfig struct {
-	Pool      *pgxpool.Pool
-	Schema    string
-	TableName string
-	Columns   []string
-	Where     string
-	BatchSize int
+	Pool      *pgxpool.Pool `json:"-"`
+	DSN       string        `json:"dsn"`
+	Schema    string        `json:"schema"`
+	TableName string        `json:"table_name"`
+	Columns   []string      `json:"columns"`
+	Where     string        `json:"where"`
+	BatchSize int           `json:"batch_size"`
 }
 
 type Extractor struct {
