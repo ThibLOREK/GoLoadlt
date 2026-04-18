@@ -2,7 +2,6 @@ package transforms
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/rinjold/go-etl-studio/internal/etl/blocks"
 	"github.com/rinjold/go-etl-studio/internal/etl/contracts"
@@ -12,38 +11,23 @@ func init() {
 	blocks.Register("transform.select", func() contracts.Block { return &Select{} })
 }
 
-// Select sélectionne et/ou renomme des colonnes.
-// Paramètre 'columns' : liste séparée par virgules.
-// Syntaxe : "col1, col2 as alias2, col3"
+// Select ne conserve qu'un sous-ensemble de colonnes.
+// Paramètres:
+//   - columns : liste de colonnes séparées par des virgules
+
 type Select struct{}
 
 func (b *Select) Type() string { return "transform.select" }
 
 func (b *Select) Run(bctx *contracts.BlockContext) error {
-	colsParam := bctx.Params["columns"]
-	if colsParam == "" {
-		return fmt.Errorf("transform.select: paramètre 'columns' manquant")
-	}
-
-	type colMapping struct {
-		src   string
-		dst   string
-	}
-	var mappings []colMapping
-	for _, part := range strings.Split(colsParam, ",") {
-		part = strings.TrimSpace(part)
-		if asIdx := strings.Index(strings.ToLower(part), " as "); asIdx >= 0 {
-			src := strings.TrimSpace(part[:asIdx])
-			dst := strings.TrimSpace(part[asIdx+4:])
-			mappings = append(mappings, colMapping{src, dst})
-		} else {
-			mappings = append(mappings, colMapping{part, part})
-		}
-	}
-
 	if len(bctx.Inputs) == 0 {
 		return fmt.Errorf("transform.select: aucun port d'entrée")
 	}
+	colsRaw := bctx.Params["columns"]
+	if colsRaw == "" {
+		return fmt.Errorf("transform.select: paramètre 'columns' manquant")
+	}
+	cols := splitComma(colsRaw)
 	in := bctx.Inputs[0]
 
 	for {
@@ -56,11 +40,17 @@ func (b *Select) Run(bctx *contracts.BlockContext) error {
 				for _, out := range bctx.Outputs { close(out.Ch) }
 				return nil
 			}
-			newRow := make(contracts.DataRow, len(mappings))
-			for _, m := range mappings {
-				newRow[m.dst] = row[m.src]
+			newRow := make(contracts.DataRow, len(cols))
+			for _, col := range cols {
+				newRow[col] = row[col]
 			}
-			for _, out := range bctx.Outputs { out.Ch <- newRow }
+			for _, out := range bctx.Outputs {
+				select {
+				case out.Ch <- newRow:
+				case <-bctx.Ctx.Done():
+					return bctx.Ctx.Err()
+				}
+			}
 		}
 	}
 }

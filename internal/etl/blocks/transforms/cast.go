@@ -3,7 +3,6 @@ package transforms
 import (
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/rinjold/go-etl-studio/internal/etl/blocks"
 	"github.com/rinjold/go-etl-studio/internal/etl/contracts"
@@ -14,27 +13,22 @@ func init() {
 }
 
 // Cast convertit le type d'une colonne.
-// Paramètres :
-//   column     : nom de la colonne à convertir
-//   targetType : type cible ("int", "float", "bool", "string", "date")
-//   format     : format de date si targetType=="date" (ex: "2006-01-02")
+// Paramètres:
+//   - column     : colonne à caster
+//   - targetType : string | int | float | bool
+
 type Cast struct{}
 
 func (b *Cast) Type() string { return "transform.cast" }
 
 func (b *Cast) Run(bctx *contracts.BlockContext) error {
+	if len(bctx.Inputs) == 0 {
+		return fmt.Errorf("transform.cast: aucun port d'entrée")
+	}
 	col := bctx.Params["column"]
 	targetType := bctx.Params["targetType"]
 	if col == "" || targetType == "" {
-		return fmt.Errorf("transform.cast: paramètres 'column' et 'targetType' obligatoires")
-	}
-	dateFormat := bctx.Params["format"]
-	if dateFormat == "" {
-		dateFormat = "2006-01-02"
-	}
-
-	if len(bctx.Inputs) == 0 {
-		return fmt.Errorf("transform.cast: aucun port d'entrée")
+		return fmt.Errorf("transform.cast: paramètres 'column' et 'targetType' requis")
 	}
 	in := bctx.Inputs[0]
 
@@ -49,24 +43,37 @@ func (b *Cast) Run(bctx *contracts.BlockContext) error {
 				return nil
 			}
 			newRow := make(contracts.DataRow, len(row))
-			for k, v := range row { newRow[k] = v }
-
-			if raw, exists := newRow[col]; exists {
-				str := fmt.Sprintf("%v", raw)
-				switch targetType {
-				case "int":
-					if v, err := strconv.ParseInt(str, 10, 64); err == nil { newRow[col] = v }
-				case "float":
-					if v, err := strconv.ParseFloat(str, 64); err == nil { newRow[col] = v }
-				case "bool":
-					if v, err := strconv.ParseBool(str); err == nil { newRow[col] = v }
-				case "string":
-					newRow[col] = str
-				case "date":
-					if t, err := time.Parse(dateFormat, str); err == nil { newRow[col] = t }
+			for k, v := range row {
+				newRow[k] = v
+			}
+			casted, err := castValue(row[col], targetType)
+			if err != nil {
+				return err
+			}
+			newRow[col] = casted
+			for _, out := range bctx.Outputs {
+				select {
+				case out.Ch <- newRow:
+				case <-bctx.Ctx.Done():
+					return bctx.Ctx.Err()
 				}
 			}
-			for _, out := range bctx.Outputs { out.Ch <- newRow }
 		}
+	}
+}
+
+func castValue(v any, targetType string) (any, error) {
+	s := fmt.Sprintf("%v", v)
+	switch targetType {
+	case "string":
+		return s, nil
+	case "int":
+		return strconv.Atoi(s)
+	case "float":
+		return strconv.ParseFloat(s, 64)
+	case "bool":
+		return strconv.ParseBool(s)
+	default:
+		return nil, fmt.Errorf("transform.cast: type cible non supporté: %s", targetType)
 	}
 }

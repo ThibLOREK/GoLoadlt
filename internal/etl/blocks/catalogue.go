@@ -1,151 +1,46 @@
 package blocks
 
-// BlockMeta décrit un bloc pour l'interface visuelle React Flow.
-type BlockMeta struct {
-	Type        string `json:"type"`
-	Category    string `json:"category"`
-	Label       string `json:"label"`
-	Description string `json:"description"`
-	MinInputs   int    `json:"minInputs"`
-	MaxInputs   int    `json:"maxInputs"`
-	MinOutputs  int    `json:"minOutputs"`
-	MaxOutputs  int    `json:"maxOutputs"`
+import "sort"
+
+// Catalogue retourne la liste descriptive des blocs disponibles pour l'UI.
+func Catalogue() []map[string]any {
+	items := []map[string]any{
+		meta("source.csv", "input", "CSV Input", "Lit un fichier CSV", 0, 0, 1, 1),
+		meta("source.postgres", "input", "PostgreSQL Input", "Exécute une requête SQL sur PostgreSQL", 0, 0, 1, 1),
+		meta("source.mysql", "input", "MySQL Input", "Exécute une requête SQL sur MySQL", 0, 0, 1, 1),
+		meta("source.mssql", "input", "MSSQL Input", "Exécute une requête SQL sur SQL Server", 0, 0, 1, 1),
+
+		meta("transform.select", "transform", "Select Columns", "Sélectionne un sous-ensemble de colonnes", 1, 1, 1, 1),
+		meta("transform.filter", "transform", "Filter Rows", "Filtre les lignes selon une condition", 1, 1, 1, 1),
+		meta("transform.cast", "transform", "Cast Type", "Convertit le type d'une colonne", 1, 1, 1, 1),
+		meta("transform.add_column", "transform", "Add Column", "Ajoute une colonne calculée", 1, 1, 1, 1),
+		meta("transform.join", "transform", "Join", "Joint deux flux sur une clé", 2, 2, 1, 1),
+		meta("transform.split", "transform", "Split", "Sépare un flux en plusieurs sorties", 1, 1, 2, 10),
+		meta("transform.aggregate", "transform", "Aggregate", "Agrège des lignes par groupe", 1, 1, 1, 1),
+		meta("transform.sort", "transform", "Sort", "Trie un flux", 1, 1, 1, 1),
+		meta("transform.dedup", "transform", "Deduplicate", "Supprime les doublons", 1, 1, 1, 1),
+		meta("transform.pivot", "transform", "Pivot", "Pivote des lignes en colonnes", 1, 1, 1, 1),
+		meta("transform.unpivot", "transform", "Unpivot", "Transforme des colonnes en lignes", 1, 1, 1, 1),
+
+		meta("target.csv", "output", "CSV Output", "Écrit le flux dans un fichier CSV", 1, 1, 0, 0),
+		meta("target.postgres", "output", "PostgreSQL Output", "Insère le flux dans PostgreSQL", 1, 1, 0, 0),
+		meta("target.browse", "output", "Browse", "Affiche un aperçu du flux", 1, 1, 0, 0),
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i]["type"].(string) < items[j]["type"].(string)
+	})
+	return items
 }
 
-// Catalogue retourne tous les blocs disponibles avec leurs métadonnées UI.
-func Catalogue() []BlockMeta {
-	return []BlockMeta{
-		// ── ENTRÉES ──────────────────────────────────────────────
-		{Type: "source.csv", Category: "input", Label: "Entrée CSV",
-			Description: "Lit un fichier CSV ligne par ligne",
-			MinInputs: 0, MaxInputs: 0, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "source.postgres", Category: "input", Label: "Entrée PostgreSQL",
-			Description: "Exécute une requête SQL sur une connexion PostgreSQL",
-			MinInputs: 0, MaxInputs: 0, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "source.mssql", Category: "input", Label: "Entrée SQL Server",
-			Description: "Exécute une requête SQL sur une connexion SQL Server",
-			MinInputs: 0, MaxInputs: 0, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "source.mysql", Category: "input", Label: "Entrée MySQL",
-			Description: "Exécute une requête SQL sur une connexion MySQL",
-			MinInputs: 0, MaxInputs: 0, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "source.text", Category: "input", Label: "Saisie de texte",
-			Description: "Saisie manuelle de données en ligne (type Alteryx Text Input)",
-			MinInputs: 0, MaxInputs: 0, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "source.directory", Category: "input", Label: "Répertoire",
-			Description: "Liste les fichiers d'un répertoire et envoie leurs chemins",
-			MinInputs: 0, MaxInputs: 0, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "source.datetime", Category: "input", Label: "Date/Heure actuelle",
-			Description: "Génère une ligne unique avec la date/heure courante",
-			MinInputs: 0, MaxInputs: 0, MinOutputs: 1, MaxOutputs: 1},
-
-		// ── SORTIES ──────────────────────────────────────────────
-		{Type: "target.csv", Category: "output", Label: "Sortie CSV",
-			Description: "Écrit les lignes dans un fichier CSV",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 0, MaxOutputs: 0},
-		{Type: "target.postgres", Category: "output", Label: "Sortie PostgreSQL",
-			Description: "Insert/upsert dans une table PostgreSQL",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 0, MaxOutputs: 0},
-		{Type: "target.mssql", Category: "output", Label: "Sortie SQL Server",
-			Description: "Insert/upsert dans une table SQL Server",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 0, MaxOutputs: 0},
-		{Type: "target.browse", Category: "output", Label: "Explorateur (Browse)",
-			Description: "Affiche les données dans l'UI sans les écrire (aperçu)",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 0, MaxOutputs: 0},
-
-		// ── TRANSFORMATION ───────────────────────────────────────
-		{Type: "transform.filter", Category: "transform", Label: "Filtre",
-			Description: "Filtre les lignes selon une condition",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.select", Category: "transform", Label: "Sélection colonnes",
-			Description: "Sélectionne et/ou renomme des colonnes",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.cast", Category: "transform", Label: "Cast de type",
-			Description: "Convertit le type d'une colonne (int, float, date...)",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.add_column", Category: "transform", Label: "Colonne calculée",
-			Description: "Ajoute une colonne avec une expression arithmétique ou littérale",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.split", Category: "transform", Label: "Split",
-			Description: "Divise le flux en N sorties selon des conditions",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 2, MaxOutputs: 10},
-		{Type: "transform.pivot", Category: "transform", Label: "Pivot",
-			Description: "Pivote des lignes en colonnes (GROUP BY + agrégation)",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.unpivot", Category: "transform", Label: "Dépivot",
-			Description: "Transforme des colonnes en lignes",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.sort", Category: "transform", Label: "Tri",
-			Description: "Trie les lignes selon une ou plusieurs colonnes",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.dedup", Category: "transform", Label: "Déduplication",
-			Description: "Supprime les doublons selon des colonnes clés",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.aggregate", Category: "transform", Label: "Agrégation",
-			Description: "SUM, COUNT, AVG, MIN, MAX par groupe",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.join", Category: "transform", Label: "Jointure",
-			Description: "Jointure entre deux flux (inner, left, right)",
-			MinInputs: 2, MaxInputs: 2, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.join_multiple", Category: "transform", Label: "Join Multiple",
-			Description: "Jointure de N flux simultanément sur une clé commune",
-			MinInputs: 2, MaxInputs: 10, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.union", Category: "transform", Label: "Union",
-			Description: "Combine plusieurs flux avec le même schéma en un seul",
-			MinInputs: 2, MaxInputs: 10, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.append_fields", Category: "transform", Label: "Append Fields",
-			Description: "Ajoute les colonnes d'un second flux au premier (horizontalement)",
-			MinInputs: 2, MaxInputs: 2, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.find_replace", Category: "transform", Label: "Find Replace",
-			Description: "Recherche et remplace des valeurs dans une colonne",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.fuzzy_match", Category: "transform", Label: "Fuzzy Match",
-			Description: "Correspondance approximative entre deux flux (distance de Levenshtein)",
-			MinInputs: 2, MaxInputs: 2, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.regex", Category: "transform", Label: "RegEx",
-			Description: "Applique une expression régulière pour extraire ou remplacer",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.text_to_columns", Category: "transform", Label: "Text to Columns",
-			Description: "Découpe une colonne texte en plusieurs colonnes selon un délimiteur",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.datetime", Category: "transform", Label: "DateTime",
-			Description: "Parse, formate ou calcule des dates (add, diff, extract)",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.auto_field", Category: "transform", Label: "Auto Field",
-			Description: "Détecte et convertit automatiquement les types de colonnes",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.data_cleansing", Category: "transform", Label: "Data Cleansing",
-			Description: "Nettoie les données : trim, nulls, casse, caractères spéciaux",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "transform.sampling", Category: "transform", Label: "Sampling",
-			Description: "Échantillonne le flux (N premières lignes, % aléatoire, 1/N)",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-
-		// ── ANALYSE & STATISTIQUES ───────────────────────────────
-		{Type: "analytics.field_summary", Category: "analytics", Label: "Field Summary",
-			Description: "Profil statistique de chaque colonne (min, max, mean, nulls...)",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "analytics.frequency_table", Category: "analytics", Label: "Frequency Table",
-			Description: "Table de fréquences des valeurs distinctes d'une colonne",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "analytics.histogram", Category: "analytics", Label: "Histogramme",
-			Description: "Répartition des valeurs d'une colonne numérique en tranches",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "analytics.scatter_plot", Category: "analytics", Label: "Scatter Plot",
-			Description: "Nuage de points entre deux colonnes numériques",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "analytics.correlation", Category: "analytics", Label: "Corrélation",
-			Description: "Calcul de corrélation Pearson / Spearman entre colonnes numériques",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "analytics.basic_profile", Category: "analytics", Label: "Basic Data Profile",
-			Description: "Profil complet du dataset : types, nulls, doublons, distributions",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-
-		// ── MACHINE LEARNING ─────────────────────────────────────
-		{Type: "ml.regression", Category: "ml", Label: "Régression",
-			Description: "Régression linéaire / logistique sur les données du flux",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
-		{Type: "ml.naive_bayes", Category: "ml", Label: "Naive Bayes",
-			Description: "Classification probabiliste Naive Bayes",
-			MinInputs: 1, MaxInputs: 1, MinOutputs: 1, MaxOutputs: 1},
+func meta(t, c, l, d string, minIn, maxIn, minOut, maxOut int) map[string]any {
+	return map[string]any{
+		"type":        t,
+		"category":    c,
+		"label":       l,
+		"description": d,
+		"minInputs":   minIn,
+		"maxInputs":   maxIn,
+		"minOutputs":  minOut,
+		"maxOutputs":  maxOut,
 	}
 }
