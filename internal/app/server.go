@@ -34,13 +34,16 @@ func NewServerApp() (*ServerApp, error) {
 	router := handlers.NewRouter(
 		container.Logger,
 		container.Config.JWTSecret,
+		container.PostgresPool,
 		container.AuthService,
 		container.PipelineService,
 		container.RunService,
 		container.ScheduleService,
+		container.ProjectStore,
+		container.ConnManager,
+		container.ConnResolver,
 	)
 
-	// Observability endpoints (registered after NewRouter which handles its own middlewares)
 	router.Handle("/metrics", telemetry.MetricsHandler())
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

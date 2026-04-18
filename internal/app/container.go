@@ -2,14 +2,19 @@ package app
 
 import (
 	"context"
+	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
+
+	connMgr "github.com/rinjold/go-etl-studio/internal/connections/manager"
+	"github.com/rinjold/go-etl-studio/internal/connections/resolver"
 	"github.com/rinjold/go-etl-studio/internal/config"
 	"github.com/rinjold/go-etl-studio/internal/logger"
 	"github.com/rinjold/go-etl-studio/internal/services"
 	"github.com/rinjold/go-etl-studio/internal/storage"
 	"github.com/rinjold/go-etl-studio/internal/storage/memory"
-	"github.com/rs/zerolog"
+	"github.com/rinjold/go-etl-studio/internal/xml/store"
 )
 
 type Container struct {
@@ -20,6 +25,9 @@ type Container struct {
 	PipelineService *services.PipelineService
 	RunService      *services.RunService
 	ScheduleService *services.ScheduleService
+	ProjectStore    *store.Store
+	ConnManager     *connMgr.Manager
+	ConnResolver    *resolver.Resolver
 }
 
 func BuildContainer(ctx context.Context) (*Container, error) {
@@ -30,6 +38,12 @@ func BuildContainer(ctx context.Context) (*Container, error) {
 
 	log := logger.New(cfg.AppEnv)
 
+	projectsDir := getEnvOr("PROJECTS_DIR", "./projects")
+	connectionsDir := getEnvOr("CONNECTIONS_DIR", "./connections")
+
+	projectStore := store.New(projectsDir)
+	connManager := connMgr.New(connectionsDir)
+
 	var (
 		userRepo     services.UserRepository
 		pipelineRepo services.PipelineRepository
@@ -39,7 +53,7 @@ func BuildContainer(ctx context.Context) (*Container, error) {
 	)
 
 	if cfg.AppEnv == "development" && cfg.PostgresDSN == "" {
-		log.Warn().Msg("[dev mode] no POSTGRES_DSN set — using in-memory repositories (data will not persist)")
+		log.Warn().Msg("[dev mode] no POSTGRES_DSN — using in-memory repositories")
 		userRepo = memory.NewUserRepository()
 		pipelineRepo = memory.NewPipelineRepository()
 		runRepo = memory.NewRunRepository()
@@ -55,18 +69,36 @@ func BuildContainer(ctx context.Context) (*Container, error) {
 		scheduleRepo = storage.NewScheduleRepository(pool)
 	}
 
-	authService := services.NewAuthService(userRepo, cfg.JWTSecret)
-	pipelineService := services.NewPipelineService(pipelineRepo)
-	runService := services.NewRunService(runRepo, pipelineRepo)
-	scheduleService := services.NewScheduleService(scheduleRepo, runService)
+	// Lire l'env actif depuis la DB (ou fallback "dev")
+	activeEnv := "dev"
+	if pool != nil {
+		var envFromDB string
+		err := pool.QueryRow(ctx, `SELECT active_env FROM environment_context WHERE id = 1`).Scan(&envFromDB)
+		if err == nil && envFromDB != "" {
+			activeEnv = envFromDB
+		}
+	}
+	log.Info().Str("activeEnv", activeEnv).Msg("environnement actif chargé")
+
+	connResolver := resolver.New(connManager, activeEnv)
 
 	return &Container{
 		Config:          cfg,
 		Logger:          log,
 		PostgresPool:    pool,
-		AuthService:     authService,
-		PipelineService: pipelineService,
-		RunService:      runService,
-		ScheduleService: scheduleService,
+		AuthService:     services.NewAuthService(userRepo, cfg.JWTSecret),
+		PipelineService: services.NewPipelineService(pipelineRepo),
+		RunService:      services.NewRunService(runRepo, pipelineRepo),
+		ScheduleService: services.NewScheduleService(scheduleRepo, services.NewRunService(runRepo, pipelineRepo)),
+		ProjectStore:    projectStore,
+		ConnManager:     connManager,
+		ConnResolver:    connResolver,
 	}, nil
+}
+
+func getEnvOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
