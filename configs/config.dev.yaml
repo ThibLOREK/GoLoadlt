@@ -1,22 +1,9 @@
-app:
-  env: dev
-  log_level: debug
-
+env: dev
 server:
-  port: 8080
-  read_timeout: 30s
-  write_timeout: 30s
-
-database:
-  dsn: "postgres://goloadit:goloadit_dev@localhost:5432/goloadit?sslmode=disable"
-  max_conns: 10
-  min_conns: 2
-
-storage:
-  projects_dir: "./projects"
-  connections_dir: "./connections"
-
-etl:
-  worker_poll_interval: 5s
-  default_channel_buffer: 1000
-  max_concurrent_runs: 5
+  addr: ":8080"
+paths:
+  projects: "./projects"
+  connections: "./connections"
+log:
+  level: debug
+  pretty: true

@@ -3,9 +3,9 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o bin/worker ./cmd/worker
+RUN go build -o /bin/worker ./cmd/worker
 
 FROM alpine:3.19
 WORKDIR /app
-COPY --from=builder /app/bin/worker .
-CMD ["./worker"]
+COPY --from=builder /bin/worker /app/worker
+CMD ["/app/worker"]

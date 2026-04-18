@@ -1,22 +1,9 @@
-app:
-  env: prod
-  log_level: warn
-
+env: prod
 server:
-  port: 8080
-  read_timeout: 30s
-  write_timeout: 30s
-
-database:
-  dsn: "${PROD_DB_DSN}"
-  max_conns: 50
-  min_conns: 10
-
-storage:
-  projects_dir: "/data/projects"
-  connections_dir: "/data/connections"
-
-etl:
-  worker_poll_interval: 3s
-  default_channel_buffer: 5000
-  max_concurrent_runs: 20
+  addr: ":8080"
+paths:
+  projects: "/data/projects"
+  connections: "/data/connections"
+log:
+  level: warn
+  pretty: false
