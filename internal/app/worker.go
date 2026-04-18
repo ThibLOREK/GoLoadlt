@@ -2,8 +2,11 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
+	"github.com/rinjold/go-etl-studio/internal/etl/engine"
+	etlpipeline "github.com/rinjold/go-etl-studio/internal/etl/pipeline"
 	"github.com/rinjold/go-etl-studio/internal/storage"
 	"github.com/rinjold/go-etl-studio/pkg/models"
 )
@@ -40,8 +43,10 @@ func (w *WorkerApp) Run(ctx context.Context) error {
 
 func (w *WorkerApp) processPendingRuns(ctx context.Context) {
 	log := w.container.Logger.With().Str("component", "worker").Logger()
-
 	pool := w.container.PostgresPool
+	runRepo := storage.NewRunRepository(pool)
+	pipelineRepo := storage.NewPipelineRepository(pool)
+
 	rows, err := pool.Query(ctx, `
 		SELECT id, pipeline_id FROM runs WHERE status = 'pending'
 		ORDER BY created_at ASC LIMIT 5
@@ -53,7 +58,7 @@ func (w *WorkerApp) processPendingRuns(ctx context.Context) {
 	defer rows.Close()
 
 	type job struct{ id, pipelineID string }
-	jobs := make([]job, 0)
+	var jobs []job
 	for rows.Next() {
 		var j job
 		if err := rows.Scan(&j.id, &j.pipelineID); err == nil {
@@ -61,17 +66,64 @@ func (w *WorkerApp) processPendingRuns(ctx context.Context) {
 		}
 	}
 
-	runRepo := storage.NewRunRepository(pool)
-
 	for _, j := range jobs {
-		log.Info().Str("run_id", j.id).Msg("executing run")
+		runLog := log.With().Str("run_id", j.id).Str("pipeline_id", j.pipelineID).Logger()
 		_ = runRepo.UpdateStatus(ctx, j.id, models.RunRunning, "")
 
-		// Placeholder: real executor would be built from pipeline definition
-		// For now we simulate a successful no-op run
-		time.Sleep(200 * time.Millisecond)
-		_ = runRepo.UpdateCounts(ctx, j.id, 0, 0)
-		_ = runRepo.UpdateStatus(ctx, j.id, models.RunSucceeded, "")
-		log.Info().Str("run_id", j.id).Msg("run succeeded")
+		pipe, err := pipelineRepo.GetByID(ctx, j.pipelineID)
+		if err != nil {
+			runLog.Error().Err(err).Msg("pipeline not found")
+			_ = runRepo.UpdateStatus(ctx, j.id, models.RunFailed, err.Error())
+			continue
+		}
+
+		def, err := pipelineToDefinition(pipe)
+		if err != nil {
+			runLog.Error().Err(err).Msg("invalid pipeline definition")
+			_ = runRepo.UpdateStatus(ctx, j.id, models.RunFailed, err.Error())
+			continue
+		}
+
+		executor, err := engine.BuildExecutor(ctx, def, pool, runLog)
+		if err != nil {
+			runLog.Error().Err(err).Msg("failed to build executor")
+			_ = runRepo.UpdateStatus(ctx, j.id, models.RunFailed, err.Error())
+			continue
+		}
+
+		runLog.Info().Msg("executing pipeline")
+		result := executor.Execute(ctx)
+
+		_ = runRepo.UpdateCounts(ctx, j.id, result.RecordsRead, result.RecordsLoaded)
+
+		if result.Err != nil {
+			runLog.Error().Err(result.Err).Dur("duration", result.Duration).Msg("run failed")
+			_ = runRepo.UpdateStatus(ctx, j.id, models.RunFailed, result.Err.Error())
+		} else {
+			runLog.Info().
+				Int64("read", result.RecordsRead).
+				Int64("loaded", result.RecordsLoaded).
+				Dur("duration", result.Duration).
+				Msg("run succeeded")
+			_ = runRepo.UpdateStatus(ctx, j.id, models.RunSucceeded, "")
+		}
 	}
+}
+
+func pipelineToDefinition(p models.Pipeline) (etlpipeline.Definition, error) {
+	var steps []etlpipeline.TransformStep
+	if p.Steps != nil {
+		if err := json.Unmarshal(p.Steps, &steps); err != nil {
+			return etlpipeline.Definition{}, err
+		}
+	}
+	return etlpipeline.Definition{
+		ID:           p.ID,
+		Name:         p.Name,
+		SourceType:   etlpipeline.SourceType(p.SourceType),
+		TargetType:   etlpipeline.TargetType(p.TargetType),
+		SourceConfig: p.SourceConfig,
+		TargetConfig: p.TargetConfig,
+		Steps:        steps,
+	}, nil
 }
