@@ -1,7 +1,8 @@
+import { useRef } from 'react'
 import type { Node, Dispatch, SetStateAction } from 'react'
 import { useEditorStore } from '@/store/editorStore'
 import { useNodeValidation } from '@/hooks/useNodeValidation'
-import { X, Trash2, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { X, Trash2, AlertTriangle, CheckCircle2, FolderOpen } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Badge from '@/components/ui/Badge'
 
@@ -11,13 +12,22 @@ interface Props {
   setNodes: Dispatch<SetStateAction<Node[]>>
 }
 
+// Met à jour un param dans rfNodes (source de vérité ReactFlow)
+function updateParam(nodeId: string, key: string, value: string, setNodes: Dispatch<SetStateAction<Node[]>>) {
+  setNodes(nds => nds.map(n => {
+    if (n.id !== nodeId) return n
+    const params = { ...(n.data.params as Record<string, string> ?? {}), [key]: value }
+    return { ...n, data: { ...n.data, params } }
+  }))
+}
+
 export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
-  const { catalogue, selectNode, updateNodeParam } = useEditorStore()
+  const { catalogue, selectNode } = useEditorStore()
   const node = nodes.find(n => n.id === nodeId)
   if (!node) return null
 
   const meta = catalogue.find((b: any) => b.type === node.data.blockType)
-  const params = node.data.params as Record<string, string>
+  const params = (node.data.params ?? {}) as Record<string, string>
 
   const validationMap = useNodeValidation(nodes)
   const validation = validationMap.get(nodeId)
@@ -28,6 +38,8 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
   }
 
   const paramFields = getParamFields(node.data.blockType as string)
+  const isFilePathField = (key: string) => key === 'path'
+  const isCSVBlock = ['source.csv', 'target.csv'].includes(node.data.blockType as string)
 
   return (
     <aside className="w-80 flex-shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col overflow-y-auto">
@@ -62,7 +74,9 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
           <input
             className={inputCls()}
             value={node.data.label as string}
-            onChange={e => setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, label: e.target.value } } : n))}
+            onChange={e => setNodes(nds => nds.map(n =>
+              n.id === nodeId ? { ...n, data: { ...n.data, label: e.target.value } } : n
+            ))}
           />
         </Field>
 
@@ -73,7 +87,9 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
               className={inputCls(validation?.missing.includes('connRef'))}
               value={node.data.connRef as string}
               placeholder="ex: conn-crm-prod"
-              onChange={e => setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, connRef: e.target.value } } : n))}
+              onChange={e => setNodes(nds => nds.map(n =>
+                n.id === nodeId ? { ...n, data: { ...n.data, connRef: e.target.value } } : n
+              ))}
             />
           </Field>
         )}
@@ -81,19 +97,26 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
         {/* Params spécifiques */}
         {paramFields.map(f => (
           <Field key={f.key} label={f.label} required={f.required} missing={validation?.missing.includes(f.key)}>
-            {f.multiline ? (
+            {isCSVBlock && isFilePathField(f.key) ? (
+              <FilePickerInput
+                value={params[f.key] ?? ''}
+                invalid={!!validation?.missing.includes(f.key)}
+                onChange={v => updateParam(nodeId, f.key, v, setNodes)}
+                placeholder={f.placeholder}
+              />
+            ) : f.multiline ? (
               <textarea
                 className={`${inputCls(validation?.missing.includes(f.key))} resize-none h-24`}
                 value={params[f.key] ?? ''}
                 placeholder={f.placeholder}
-                onChange={e => updateNodeParam(nodeId, f.key, e.target.value)}
+                onChange={e => updateParam(nodeId, f.key, e.target.value, setNodes)}
               />
             ) : (
               <input
                 className={inputCls(validation?.missing.includes(f.key))}
                 value={params[f.key] ?? ''}
                 placeholder={f.placeholder}
-                onChange={e => updateNodeParam(nodeId, f.key, e.target.value)}
+                onChange={e => updateParam(nodeId, f.key, e.target.value, setNodes)}
               />
             )}
           </Field>
@@ -111,6 +134,49 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
         </Button>
       </div>
     </aside>
+  )
+}
+
+// Champ avec bouton Parcourir
+function FilePickerInput({
+  value, invalid, onChange, placeholder
+}: {
+  value: string
+  invalid: boolean
+  onChange: (v: string) => void
+  placeholder?: string
+}) {
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) onChange(file.name)
+  }
+
+  return (
+    <div className="flex gap-2">
+      <input
+        className={`${inputCls(invalid)} flex-1`}
+        value={value}
+        placeholder={placeholder}
+        onChange={e => onChange(e.target.value)}
+      />
+      <button
+        type="button"
+        title="Parcourir"
+        onClick={() => fileRef.current?.click()}
+        className="flex-shrink-0 px-2 py-1.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-gray-300 transition-colors"
+      >
+        <FolderOpen size={15} />
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".csv,.txt"
+        className="hidden"
+        onChange={handleFilePick}
+      />
+    </div>
   )
 }
 
@@ -151,16 +217,16 @@ interface ParamField { key: string; label: string; placeholder?: string; multili
 
 function getParamFields(blockType: string): ParamField[] {
   switch (blockType) {
-    case 'source.csv':      return [
+    case 'source.csv': return [
       { key: 'path', label: 'Chemin fichier', placeholder: '/data/input.csv', required: true },
       { key: 'delimiter', label: 'Délimiteur', placeholder: ',' },
     ]
     case 'source.postgres':
     case 'source.mysql':
-    case 'source.mssql':   return [
+    case 'source.mssql': return [
       { key: 'query', label: 'Requête SQL', placeholder: 'SELECT * FROM table_name', multiline: true, required: true },
     ]
-    case 'target.csv':     return [
+    case 'target.csv': return [
       { key: 'path', label: 'Chemin fichier', placeholder: '/data/output.csv', required: true },
       { key: 'delimiter', label: 'Délimiteur', placeholder: ',' },
       { key: 'append', label: 'Mode append', placeholder: 'false' },
@@ -174,7 +240,7 @@ function getParamFields(blockType: string): ParamField[] {
     case 'transform.select': return [
       { key: 'columns', label: 'Colonnes (virgule)', placeholder: 'id, name, amount', required: true },
     ]
-    case 'transform.cast':  return [
+    case 'transform.cast': return [
       { key: 'column', label: 'Colonne', placeholder: 'price', required: true },
       { key: 'targetType', label: 'Type cible', placeholder: 'float | int | string | bool', required: true },
     ]
@@ -182,7 +248,7 @@ function getParamFields(blockType: string): ParamField[] {
       { key: 'name', label: 'Nom colonne', placeholder: 'tax', required: true },
       { key: 'expression', label: 'Expression', placeholder: 'amount * 0.20', required: true },
     ]
-    case 'transform.join':  return [
+    case 'transform.join': return [
       { key: 'leftKey', label: 'Clé gauche', placeholder: 'user_id', required: true },
       { key: 'rightKey', label: 'Clé droite', placeholder: 'id', required: true },
       { key: 'type', label: 'Type de join', placeholder: 'inner | left | right | full' },
@@ -194,7 +260,7 @@ function getParamFields(blockType: string): ParamField[] {
       { key: 'groupBy', label: 'Group By (virgule)', placeholder: 'region, category', required: true },
       { key: 'aggregations', label: 'Agrégations', placeholder: 'SUM(amount), COUNT(id)', required: true },
     ]
-    case 'transform.sort':  return [
+    case 'transform.sort': return [
       { key: 'columns', label: 'Colonnes (virgule)', placeholder: 'date, amount', required: true },
       { key: 'order', label: 'Ordre', placeholder: 'asc | desc' },
     ]
