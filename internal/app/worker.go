@@ -8,6 +8,7 @@ import (
 	"github.com/rinjold/go-etl-studio/internal/etl/engine"
 	etlpipeline "github.com/rinjold/go-etl-studio/internal/etl/pipeline"
 	"github.com/rinjold/go-etl-studio/internal/storage"
+	"github.com/rinjold/go-etl-studio/internal/telemetry"
 	"github.com/rinjold/go-etl-studio/pkg/models"
 )
 
@@ -75,11 +76,14 @@ func (w *WorkerApp) processPendingRuns(ctx context.Context) {
 	for _, j := range jobs {
 		runLog := log.With().Str("run_id", j.id).Str("pipeline_id", j.pipelineID).Logger()
 		_ = runRepo.UpdateStatus(ctx, j.id, models.RunRunning, "")
+		telemetry.ActiveRuns.Inc()
 
 		pipe, err := pipelineRepo.GetByID(ctx, j.pipelineID)
 		if err != nil {
 			runLog.Error().Err(err).Msg("pipeline not found")
 			_ = runRepo.UpdateStatus(ctx, j.id, models.RunFailed, err.Error())
+			telemetry.ActiveRuns.Dec()
+			telemetry.RecordRun(j.pipelineID, "failed", 0, 0, 0)
 			continue
 		}
 
@@ -87,6 +91,8 @@ func (w *WorkerApp) processPendingRuns(ctx context.Context) {
 		if err != nil {
 			runLog.Error().Err(err).Msg("invalid pipeline definition")
 			_ = runRepo.UpdateStatus(ctx, j.id, models.RunFailed, err.Error())
+			telemetry.ActiveRuns.Dec()
+			telemetry.RecordRun(j.pipelineID, "failed", 0, 0, 0)
 			continue
 		}
 
@@ -94,16 +100,21 @@ func (w *WorkerApp) processPendingRuns(ctx context.Context) {
 		if err != nil {
 			runLog.Error().Err(err).Msg("failed to build executor")
 			_ = runRepo.UpdateStatus(ctx, j.id, models.RunFailed, err.Error())
+			telemetry.ActiveRuns.Dec()
+			telemetry.RecordRun(j.pipelineID, "failed", 0, 0, 0)
 			continue
 		}
 
 		runLog.Info().Msg("executing pipeline")
 		result := executor.Execute(ctx)
+
+		telemetry.ActiveRuns.Dec()
 		_ = runRepo.UpdateCounts(ctx, j.id, result.RecordsRead, result.RecordsLoaded)
 
 		if result.Err != nil {
 			runLog.Error().Err(result.Err).Dur("duration", result.Duration).Msg("run failed")
 			_ = runRepo.UpdateStatus(ctx, j.id, models.RunFailed, result.Err.Error())
+			telemetry.RecordRun(j.pipelineID, "failed", result.Duration, result.RecordsRead, result.RecordsLoaded)
 		} else {
 			runLog.Info().
 				Int64("read", result.RecordsRead).
@@ -111,6 +122,7 @@ func (w *WorkerApp) processPendingRuns(ctx context.Context) {
 				Dur("duration", result.Duration).
 				Msg("run succeeded")
 			_ = runRepo.UpdateStatus(ctx, j.id, models.RunSucceeded, "")
+			telemetry.RecordRun(j.pipelineID, "succeeded", result.Duration, result.RecordsRead, result.RecordsLoaded)
 		}
 	}
 }

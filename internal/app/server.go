@@ -2,22 +2,32 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/rinjold/go-etl-studio/api/handlers"
 	"github.com/rinjold/go-etl-studio/api/middleware"
 	"github.com/rinjold/go-etl-studio/internal/config"
+	"github.com/rinjold/go-etl-studio/internal/telemetry"
 )
 
 type ServerApp struct {
-	cfg       config.Config
-	server    *http.Server
-	container *Container
+	cfg          config.Config
+	server       *http.Server
+	container    *Container
+	telProvider  *telemetry.Provider
 }
 
 func NewServerApp() (*ServerApp, error) {
-	container, err := BuildContainer(context.Background())
+	ctx := context.Background()
+	container, err := BuildContainer(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	telProvider, err := telemetry.Init(ctx, container.Config.AppName)
 	if err != nil {
 		return nil, err
 	}
@@ -32,12 +42,29 @@ func NewServerApp() (*ServerApp, error) {
 	)
 	middleware.Apply(router)
 
+	// Observability endpoints
+	router.Handle("/metrics", telemetry.MetricsHandler())
+	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok",
+			"time":   time.Now().UTC(),
+			"app":    container.Config.AppName,
+			"env":    container.Config.AppEnv,
+		})
+	})
+
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", container.Config.HTTPPort),
 		Handler: router,
 	}
 
-	return &ServerApp{cfg: container.Config, server: server, container: container}, nil
+	return &ServerApp{
+		cfg:         container.Config,
+		server:      server,
+		container:   container,
+		telProvider: telProvider,
+	}, nil
 }
 
 func (a *ServerApp) Run() error {
@@ -48,6 +75,9 @@ func (a *ServerApp) Run() error {
 func (a *ServerApp) Shutdown(ctx context.Context) error {
 	if a.container.PostgresPool != nil {
 		a.container.PostgresPool.Close()
+	}
+	if a.telProvider != nil {
+		_ = a.telProvider.Shutdown(ctx)
 	}
 	return a.server.Shutdown(ctx)
 }
