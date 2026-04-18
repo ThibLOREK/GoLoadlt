@@ -73,6 +73,33 @@ func (r *RunRepository) ListByPipeline(ctx context.Context, pipelineID string) (
 	return runs, rows.Err()
 }
 
+func (r *RunRepository) ListPending(ctx context.Context) ([]models.Run, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, pipeline_id, status, started_at, finished_at, error_msg,
+		       records_read, records_loaded, created_at
+		FROM runs WHERE status = 'pending'
+		ORDER BY created_at ASC LIMIT 5
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	runs := make([]models.Run, 0)
+	for rows.Next() {
+		var run models.Run
+		if err := rows.Scan(
+			&run.ID, &run.PipelineID, &run.Status,
+			&run.StartedAt, &run.FinishedAt, &run.ErrorMsg,
+			&run.RecordsRead, &run.RecordsLoad, &run.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
 func (r *RunRepository) UpdateStatus(ctx context.Context, id string, status models.RunStatus, errMsg string) error {
 	now := time.Now().UTC()
 	var q string
