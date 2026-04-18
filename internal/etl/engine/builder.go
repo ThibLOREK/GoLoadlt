@@ -21,7 +21,7 @@ func BuildExecutor(ctx context.Context, def pipeline.Definition, pool *pgxpool.P
 	if err != nil {
 		return Executor{}, fmt.Errorf("build extractor: %w", err)
 	}
-	loader, err := buildLoader(ctx, def, pool)
+	loader, err := buildLoader(def, pool)
 	if err != nil {
 		return Executor{}, fmt.Errorf("build loader: %w", err)
 	}
@@ -40,7 +40,6 @@ func buildExtractor(ctx context.Context, def pipeline.Definition, pool *pgxpool.
 			return nil, err
 		}
 		return csvconn.NewExtractor(cfg), nil
-
 	case pipeline.SourcePostgres:
 		var cfg pgconn.ExtractorConfig
 		if err := json.Unmarshal(def.SourceConfig, &cfg); err != nil {
@@ -56,20 +55,18 @@ func buildExtractor(ctx context.Context, def pipeline.Definition, pool *pgxpool.
 			cfg.Pool = pool
 		}
 		return pgconn.NewExtractor(cfg), nil
-
 	case pipeline.SourceAPI:
 		var cfg apiconn.ExtractorConfig
 		if err := json.Unmarshal(def.SourceConfig, &cfg); err != nil {
 			return nil, err
 		}
 		return apiconn.NewExtractor(cfg), nil
-
 	default:
 		return nil, fmt.Errorf("unknown source type: %s", def.SourceType)
 	}
 }
 
-func buildLoader(ctx context.Context, def pipeline.Definition, pool *pgxpool.Pool) (contracts.Loader, error) {
+func buildLoader(def pipeline.Definition, pool *pgxpool.Pool) (contracts.Loader, error) {
 	switch def.TargetType {
 	case pipeline.TargetPostgres:
 		var cfg pgconn.LoaderConfig
@@ -80,6 +77,12 @@ func buildLoader(ctx context.Context, def pipeline.Definition, pool *pgxpool.Poo
 			cfg.Pool = pool
 		}
 		return pgconn.NewLoader(cfg), nil
+	case pipeline.TargetCSV:
+		var cfg csvconn.LoaderConfig
+		if err := json.Unmarshal(def.TargetConfig, &cfg); err != nil {
+			return nil, err
+		}
+		return csvconn.NewLoader(cfg), nil
 	default:
 		return nil, fmt.Errorf("unknown target type: %s", def.TargetType)
 	}
