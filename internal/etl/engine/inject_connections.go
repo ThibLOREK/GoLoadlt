@@ -15,12 +15,12 @@ func InjectResolvedConnections(
 ) error {
 	for i := range project.Nodes {
 		node := &project.Nodes[i]
-		if node.ConnectionRef == "" {
+		if node.ConnRef == "" {
 			continue
 		}
-		rc, err := resolve(node.ConnectionRef)
+		rc, err := resolve(node.ConnRef)
 		if err != nil {
-			return fmt.Errorf("node '%s': résolution connexion '%s': %w", node.ID, node.ConnectionRef, err)
+			return fmt.Errorf("node '%s': résolution connexion '%s': %w", node.ID, node.ConnRef, err)
 		}
 		ensureParam(&node.Params, "dsn", rc.DSN)
 		ensureParam(&node.Params, "db_type", rc.Type)
