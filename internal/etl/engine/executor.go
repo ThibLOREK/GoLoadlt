@@ -5,78 +5,139 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rinjold/go-etl-studio/internal/etl/contracts"
 	"github.com/rs/zerolog"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
+
+	"github.com/rinjold/go-etl-studio/internal/etl/blocks"
+	"github.com/rinjold/go-etl-studio/internal/etl/contracts"
 )
 
+const defaultChannelBuffer = 1000
+
+// RunResult contient les métriques d'exécution d'un bloc.
 type RunResult struct {
-	RecordsRead   int64
-	RecordsLoaded int64
-	Duration      time.Duration
-	Err           error
+	NodeID   string
+	RowsIn   int64
+	RowsOut  int64
+	Duration time.Duration
+	Err      error
 }
 
+// ExecutionReport contient le rapport complet d'un run.
+type ExecutionReport struct {
+	ProjectID string
+	StartedAt time.Time
+	EndedAt   time.Time
+	Results   []RunResult
+	Success   bool
+}
+
+// Executor exécute un projet ETL à partir de son DAG.
 type Executor struct {
-	Extractor   contracts.Extractor
-	Transformer contracts.Transformer
-	Loader      contracts.Loader
-	Log         zerolog.Logger
+	log       zerolog.Logger
+	ActiveEnv string
 }
 
-func (e Executor) Execute(ctx context.Context) RunResult {
-	tracer := otel.Tracer("etl.engine")
-	ctx, span := tracer.Start(ctx, "pipeline.execute")
-	defer span.End()
+// NewExecutor crée un Executor.
+func NewExecutor(log zerolog.Logger, activeEnv string) *Executor {
+	return &Executor{log: log, ActiveEnv: activeEnv}
+}
 
-	start := time.Now()
-
-	// Extract
-	_, extractSpan := tracer.Start(ctx, "extract")
-	e.Log.Info().Msg("extraction started")
-	records, err := e.Extractor.Extract(ctx)
-	extractSpan.End()
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return RunResult{Err: fmt.Errorf("extract: %w", err), Duration: time.Since(start)}
+// Execute exécute un projet ETL complet.
+func (e *Executor) Execute(ctx context.Context, project *contracts.Project) (*ExecutionReport, error) {
+	report := &ExecutionReport{
+		ProjectID: project.ID,
+		StartedAt: time.Now(),
 	}
-	e.Log.Info().Int("records", len(records)).Msg("extraction done")
 
-	// Transform
-	if e.Transformer != nil {
-		_, transformSpan := tracer.Start(ctx, "transform")
-		records, err = e.Transformer.Transform(ctx, records)
-		transformSpan.End()
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return RunResult{RecordsRead: int64(len(records)), Err: fmt.Errorf("transform: %w", err), Duration: time.Since(start)}
+	// Construire le DAG.
+	dag, err := BuildDAG(project)
+	if err != nil {
+		return nil, fmt.Errorf("executor: %w", err)
+	}
+
+	// Tri topologique.
+	ordered, err := dag.TopologicalSort()
+	if err != nil {
+		return nil, fmt.Errorf("executor: %w", err)
+	}
+
+	// Créer les ports (canaux) entre les blocs.
+	// Un port est identifié par "fromNodeID:portID" ou "fromNodeID:" pour le port par défaut.
+	ports := make(map[string]*contracts.Port)
+	for _, node := range ordered {
+		for _, succ := range dag.Successors(node.ID) {
+			key := node.ID + "->" + succ.ID
+			ports[key] = &contracts.Port{
+				ID: key,
+				Ch: make(chan contracts.DataRow, defaultChannelBuffer),
+			}
 		}
 	}
 
-	// Load
-	_, loadSpan := tracer.Start(ctx, "load")
-	e.Log.Info().Msg("loading started")
-	err = e.Loader.Load(ctx, records)
-	loadSpan.End()
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return RunResult{RecordsRead: int64(len(records)), Err: fmt.Errorf("load: %w", err), Duration: time.Since(start)}
+	// Exécuter chaque bloc dans l'ordre topologique.
+	for _, node := range ordered {
+		start := time.Now()
+		result := RunResult{NodeID: node.ID}
+
+		// Récupérer la factory du bloc depuis le registre.
+		factory, ok := blocks.Registry[node.Type]
+		if !ok {
+			err := fmt.Errorf("bloc de type '%s' non enregistré", node.Type)
+			result.Err = err
+			report.Results = append(report.Results, result)
+			report.EndedAt = time.Now()
+			return report, err
+		}
+		block := factory()
+
+		// Assembler les ports d'entrée : channels venant des prédécesseurs.
+		var inputPorts []*contracts.Port
+		for predID, succs := range dag.adjacency {
+			for _, succID := range succs {
+				if succID == node.ID {
+					key := predID + "->" + node.ID
+					if p, ok := ports[key]; ok {
+						inputPorts = append(inputPorts, p)
+					}
+				}
+			}
+		}
+
+		// Assembler les ports de sortie : channels vers les successeurs.
+		var outputPorts []*contracts.Port
+		for _, succ := range dag.Successors(node.ID) {
+			key := node.ID + "->" + succ.ID
+			if p, ok := ports[key]; ok {
+				outputPorts = append(outputPorts, p)
+			}
+		}
+
+		bctx := &contracts.BlockContext{
+			Ctx:       ctx,
+			Params:    node.ParamMap(),
+			ConnRef:   node.ConnRef,
+			ActiveEnv: e.ActiveEnv,
+			Inputs:    inputPorts,
+			Outputs:   outputPorts,
+		}
+
+		e.log.Info().Str("node", node.ID).Str("type", node.Type).Msg("exécution bloc")
+
+		if err := block.Run(bctx); err != nil {
+			result.Err = err
+			result.Duration = time.Since(start)
+			report.Results = append(report.Results, result)
+			report.EndedAt = time.Now()
+			e.log.Error().Str("node", node.ID).Err(err).Msg("bloc en erreur")
+			return report, fmt.Errorf("executor: bloc '%s': %w", node.ID, err)
+		}
+
+		result.Duration = time.Since(start)
+		report.Results = append(report.Results, result)
+		e.log.Info().Str("node", node.ID).Dur("durée", result.Duration).Msg("bloc terminé")
 	}
 
-	span.SetAttributes(
-		attribute.Int64("records.read", int64(len(records))),
-		attribute.Int64("records.loaded", int64(len(records))),
-	)
-	span.SetStatus(codes.Ok, "")
-
-	return RunResult{
-		RecordsRead:   int64(len(records)),
-		RecordsLoaded: int64(len(records)),
-		Duration:      time.Since(start),
-	}
+	report.EndedAt = time.Now()
+	report.Success = true
+	return report, nil
 }
