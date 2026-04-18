@@ -5,103 +5,112 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+
+	"github.com/rinjold/go-etl-studio/internal/connections"
 )
 
-// ConnEnv contient les paramètres d'un environnement de connexion.
-type ConnEnv struct {
-	Name      string `xml:"name,attr"`
-	Host      string `xml:"host,attr"`
-	Port      int    `xml:"port,attr"`
-	Database  string `xml:"db,attr"`
-	User      string `xml:"user,attr"`
-	SecretRef string `xml:"secretRef,attr"` // ex: "${DB_PASSWORD}" ou "vault:secret/crm"
-}
-
-// Connection est une connexion réutilisable multi-environnements.
-type Connection struct {
-	ID   string     `xml:"id,attr"`
-	Name string     `xml:"name,attr"`
-	Type string     `xml:"type,attr"` // postgres, mysql, mssql, rest, csv...
-	Envs []ConnEnv  `xml:"environments>env"`
-}
-
-// EnvMap retourne les environnements indexés par nom.
-func (c *Connection) EnvMap() map[string]*ConnEnv {
-	m := make(map[string]*ConnEnv, len(c.Envs))
-	for i := range c.Envs {
-		m[c.Envs[i].Name] = &c.Envs[i]
-	}
-	return m
-}
-
-// Manager gère les connexions persistantes en XML.
+// Manager gère le CRUD des connexions et le switch d'environnement global.
 type Manager struct {
-	BaseDir string // ex: "./connections"
+	mu          sync.RWMutex
+	connsDir    string
+	connections map[string]*connections.Connection
+	ActiveEnv   string // "dev" | "preprod" | "prod"
 }
 
-// New crée un Manager.
-func New(baseDir string) *Manager {
-	return &Manager{BaseDir: baseDir}
-}
-
-func (m *Manager) path(id string) string {
-	return filepath.Join(m.BaseDir, id+".xml")
-}
-
-// Save sauvegarde une connexion en XML.
-func (m *Manager) Save(c *Connection) error {
-	if err := os.MkdirAll(m.BaseDir, 0o755); err != nil {
-		return fmt.Errorf("connections.Save: %w", err)
+// New crée un Manager et charge les connexions existantes depuis le répertoire.
+func New(connsDir string, activeEnv string) (*Manager, error) {
+	if err := os.MkdirAll(connsDir, 0o755); err != nil {
+		return nil, fmt.Errorf("manager: création répertoire connexions: %w", err)
 	}
-	data, err := xml.MarshalIndent(c, "", "  ")
+	m := &Manager{
+		connsDir:    connsDir,
+		connections: make(map[string]*connections.Connection),
+		ActiveEnv:   activeEnv,
+	}
+	return m, m.loadAll()
+}
+
+// loadAll charge tous les fichiers XML du répertoire de connexions.
+func (m *Manager) loadAll() error {
+	entries, err := os.ReadDir(m.connsDir)
 	if err != nil {
-		return fmt.Errorf("connections.Save: marshal: %w", err)
+		return fmt.Errorf("manager: lecture répertoire connexions: %w", err)
 	}
-	data = append([]byte(xml.Header), data...)
-	return os.WriteFile(m.path(c.ID), data, 0o644)
-}
-
-// Load charge une connexion par ID.
-func (m *Manager) Load(id string) (*Connection, error) {
-	data, err := os.ReadFile(m.path(id))
-	if err != nil {
-		return nil, fmt.Errorf("connections.Load '%s': %w", id, err)
-	}
-	var c Connection
-	if err := xml.Unmarshal(data, &c); err != nil {
-		return nil, fmt.Errorf("connections.Load '%s': unmarshal: %w", id, err)
-	}
-	return &c, nil
-}
-
-// Delete supprime une connexion.
-func (m *Manager) Delete(id string) error {
-	if err := os.Remove(m.path(id)); err != nil {
-		return fmt.Errorf("connections.Delete '%s': %w", id, err)
-	}
-	return nil
-}
-
-// List retourne toutes les connexions.
-func (m *Manager) List() ([]*Connection, error) {
-	entries, err := os.ReadDir(m.BaseDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("connections.List: %w", err)
-	}
-	var conns []*Connection
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".xml" {
 			continue
 		}
-		id := e.Name()[:len(e.Name())-4]
-		c, err := m.Load(id)
+		data, err := os.ReadFile(filepath.Join(m.connsDir, e.Name()))
 		if err != nil {
-			continue
+			return fmt.Errorf("manager: lecture connexion '%s': %w", e.Name(), err)
 		}
-		conns = append(conns, c)
+		var conn connections.Connection
+		if err := xml.Unmarshal(data, &conn); err != nil {
+			return fmt.Errorf("manager: parse connexion '%s': %w", e.Name(), err)
+		}
+		conn.Envs = make(map[string]connections.ConnEnv, len(conn.EnvList))
+		for _, env := range conn.EnvList {
+			conn.Envs[env.Name] = env
+		}
+		m.connections[conn.ID] = &conn
 	}
-	return conns, nil
+	return nil
+}
+
+// Get retourne une connexion par ID.
+func (m *Manager) Get(id string) (*connections.Connection, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	conn, ok := m.connections[id]
+	if !ok {
+		return nil, fmt.Errorf("manager: connexion '%s' introuvable", id)
+	}
+	return conn, nil
+}
+
+// List retourne toutes les connexions.
+func (m *Manager) List() []*connections.Connection {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	list := make([]*connections.Connection, 0, len(m.connections))
+	for _, c := range m.connections {
+		list = append(list, c)
+	}
+	return list
+}
+
+// Save crée ou met à jour une connexion (persistance XML).
+func (m *Manager) Save(conn *connections.Connection) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	conn.EnvList = make([]connections.ConnEnv, 0, len(conn.Envs))
+	for _, env := range conn.Envs {
+		conn.EnvList = append(conn.EnvList, env)
+	}
+	data, err := xml.MarshalIndent(conn, "", "  ")
+	if err != nil {
+		return fmt.Errorf("manager: sérialisation connexion '%s': %w", conn.ID, err)
+	}
+	path := filepath.Join(m.connsDir, conn.ID+".xml")
+	if err := os.WriteFile(path, append([]byte(xml.Header), data...), 0o644); err != nil {
+		return fmt.Errorf("manager: écriture connexion '%s': %w", conn.ID, err)
+	}
+	m.connections[conn.ID] = conn
+	return nil
+}
+
+// Delete supprime une connexion.
+func (m *Manager) Delete(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.connections, id)
+	return os.Remove(filepath.Join(m.connsDir, id+".xml"))
+}
+
+// SwitchEnv bascule l'environnement actif globalement.
+func (m *Manager) SwitchEnv(env string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ActiveEnv = env
 }
