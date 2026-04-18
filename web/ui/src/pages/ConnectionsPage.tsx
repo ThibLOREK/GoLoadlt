@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Plus, Trash2, Zap } from 'lucide-react'
-import { listConnections, createConnection, deleteConnection, testConnection, switchEnv, getEnv } from '@/api/client'
+import { listConnections, createConnection, deleteConnection, testConnection, switchEnvironment, getEnvironment } from '@/api/client'
 import type { Connection } from '@/types/api'
 import Button from '@/components/ui/Button'
 import Modal from '@/components/ui/Modal'
@@ -18,12 +18,12 @@ export default function ConnectionsPage() {
 
   const load = () => {
     listConnections().then(setConnections).catch(console.error)
-    getEnv().then(r => { setActiveEnvState(r.activeEnv); localStorage.setItem('activeEnv', r.activeEnv) })
+    getEnvironment().then((r: any) => { setActiveEnvState(r.activeEnv); localStorage.setItem('activeEnv', r.activeEnv) })
   }
   useEffect(() => { load() }, [])
 
   const handleSwitchEnv = async (env: string) => {
-    await switchEnv(env)
+    await switchEnvironment(env)
     setActiveEnvState(env)
     localStorage.setItem('activeEnv', env)
   }
