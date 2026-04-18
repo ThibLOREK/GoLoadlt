@@ -2,41 +2,33 @@ package transforms
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/rinjold/go-etl-studio/internal/etl/blocks"
 	"github.com/rinjold/go-etl-studio/internal/etl/contracts"
+	"github.com/rinjold/go-etl-studio/internal/etl/expression"
 )
 
 func init() {
 	blocks.Register("transform.filter", func() contracts.Block { return &Filter{} })
 }
 
-// Filter ne laisse passer que les lignes qui satisfont une condition simple.
-// Syntaxe supportée : "colonne operateur valeur"
-// Exemples : "amount > 100", "status == active", "region != FR"
+// Filter conserve uniquement les lignes qui matchent une condition.
+// Paramètres:
+//   - condition : ex "amount > 100" ou "country == 'FR'"
 type Filter struct{}
 
 func (b *Filter) Type() string { return "transform.filter" }
 
 func (b *Filter) Run(bctx *contracts.BlockContext) error {
-	condition := bctx.Params["condition"]
-	if condition == "" {
-		return fmt.Errorf("transform.filter: paramètre 'condition' manquant")
-	}
-
-	parts := strings.Fields(condition)
-	if len(parts) != 3 {
-		return fmt.Errorf("transform.filter: condition invalide '%s' (attendu: 'col op val')", condition)
-	}
-	col, op, val := parts[0], parts[1], parts[2]
-
 	if len(bctx.Inputs) == 0 {
 		return fmt.Errorf("transform.filter: aucun port d'entrée")
 	}
-	in := bctx.Inputs[0]
+	cond := bctx.Params["condition"]
+	if cond == "" {
+		return fmt.Errorf("transform.filter: paramètre 'condition' manquant")
+	}
 
+	in := bctx.Inputs[0]
 	for {
 		select {
 		case <-bctx.Ctx.Done():
@@ -51,44 +43,20 @@ func (b *Filter) Run(bctx *contracts.BlockContext) error {
 				}
 				return nil
 			}
-			if matchCondition(row, col, op, val) {
-				for _, out := range bctx.Outputs {
-					out.Ch <- row
+			keep, err := expression.EvalBool(cond, row)
+			if err != nil {
+				return err
+			}
+			if !keep {
+				continue
+			}
+			for _, out := range bctx.Outputs {
+				select {
+				case out.Ch <- row:
+				case <-bctx.Ctx.Done():
+					return bctx.Ctx.Err()
 				}
 			}
 		}
 	}
-}
-
-func matchCondition(row contracts.DataRow, col, op, val string) bool {
-	rawVal, ok := row[col]
-	if !ok {
-		return false
-	}
-	cellStr := fmt.Sprintf("%v", rawVal)
-
-	// Comparaison numérique si possible.
-	cellNum, errCell := strconv.ParseFloat(cellStr, 64)
-	valNum, errVal := strconv.ParseFloat(val, 64)
-
-	if errCell == nil && errVal == nil {
-		switch op {
-		case ">": return cellNum > valNum
-		case ">=": return cellNum >= valNum
-		case "<": return cellNum < valNum
-		case "<=": return cellNum <= valNum
-		case "==", "=": return cellNum == valNum
-		case "!=": return cellNum != valNum
-		}
-	}
-
-	// Comparaison string.
-	switch op {
-	case "==", "=": return cellStr == val
-	case "!=": return cellStr != val
-	case "contains": return strings.Contains(cellStr, val)
-	case "startsWith": return strings.HasPrefix(cellStr, val)
-	case "endsWith": return strings.HasSuffix(cellStr, val)
-	}
-	return false
 }
