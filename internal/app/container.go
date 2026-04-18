@@ -8,6 +8,7 @@ import (
 	"github.com/rinjold/go-etl-studio/internal/logger"
 	"github.com/rinjold/go-etl-studio/internal/services"
 	"github.com/rinjold/go-etl-studio/internal/storage"
+	"github.com/rinjold/go-etl-studio/internal/storage/memory"
 	"github.com/rs/zerolog"
 )
 
@@ -28,15 +29,31 @@ func BuildContainer(ctx context.Context) (*Container, error) {
 	}
 
 	log := logger.New(cfg.AppEnv)
-	pool, err := storage.NewPostgresPool(ctx, cfg.PostgresDSN)
-	if err != nil {
-		return nil, err
-	}
 
-	userRepo := storage.NewUserRepository(pool)
-	pipelineRepo := storage.NewPipelineRepository(pool)
-	runRepo := storage.NewRunRepository(pool)
-	scheduleRepo := storage.NewScheduleRepository(pool)
+	var (
+		userRepo     services.UserRepository
+		pipelineRepo services.PipelineRepository
+		runRepo      services.RunRepository
+		scheduleRepo services.ScheduleRepository
+		pool         *pgxpool.Pool
+	)
+
+	if cfg.AppEnv == "development" && cfg.PostgresDSN == "" {
+		log.Warn().Msg("[dev mode] no POSTGRES_DSN set — using in-memory repositories (data will not persist)")
+		userRepo = memory.NewUserRepository()
+		pipelineRepo = memory.NewPipelineRepository()
+		runRepo = memory.NewRunRepository()
+		scheduleRepo = memory.NewScheduleRepository()
+	} else {
+		pool, err = storage.NewPostgresPool(ctx, cfg.PostgresDSN)
+		if err != nil {
+			return nil, err
+		}
+		userRepo = storage.NewUserRepository(pool)
+		pipelineRepo = storage.NewPipelineRepository(pool)
+		runRepo = storage.NewRunRepository(pool)
+		scheduleRepo = storage.NewScheduleRepository(pool)
+	}
 
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret)
 	pipelineService := services.NewPipelineService(pipelineRepo)
