@@ -28,9 +28,9 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	projectsDir := getEnv("PROJECTS_DIR", "./projects")
-	connsDir := getEnv("CONNECTIONS_DIR", "./connections")
-	activeEnv := getEnv("ACTIVE_ENV", "dev")
-	addr := getEnv("SERVER_ADDR", ":8080")
+	connsDir    := getEnv("CONNECTIONS_DIR", "./connections")
+	activeEnv   := getEnv("ACTIVE_ENV", "dev")
+	addr        := getEnv("SERVER_ADDR", ":8090")
 
 	// Initialiser le store XML des projets.
 	projectStore, err := store.NewProjectStore(projectsDir)
@@ -50,12 +50,13 @@ func main() {
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestID)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{"*"},
+		AllowedOrigins: []string{"http://localhost:3000", "http://localhost:5173"},
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{"Accept", "Content-Type"},
 	}))
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
