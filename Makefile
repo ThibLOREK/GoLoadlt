@@ -1,22 +1,37 @@
-APP_NAME=go-etl-studio
+.PHONY: server worker ui build docker-up docker-down test tidy
 
-.PHONY: run-server run-worker tidy fmt test build
-
-run-server:
+## --- Dev ---
+server:
 	go run ./cmd/server
 
-run-worker:
+worker:
 	go run ./cmd/worker
+
+ui:
+	cd web/ui && npm run dev
+
+## --- Build ---
+build:
+	go build -o bin/server ./cmd/server
+	go build -o bin/worker ./cmd/worker
+
+## --- Docker ---
+docker-up:
+	docker compose -f deploy/docker/docker-compose.yml up --build -d
+
+docker-down:
+	docker compose -f deploy/docker/docker-compose.yml down
+
+## --- Go ---
+test:
+	go test ./... -race -cover
 
 tidy:
 	go mod tidy
 
-fmt:
-	gofmt -w ./cmd ./internal ./api ./pkg
+## --- UI ---
+ui-build:
+	cd web/ui && npm run build
 
-test:
-	go test ./...
-
-build:
-	go build -o bin/server ./cmd/server
-	go build -o bin/worker ./cmd/worker
+ui-install:
+	cd web/ui && npm install
