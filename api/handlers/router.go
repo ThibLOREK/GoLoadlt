@@ -30,12 +30,10 @@ func NewRouter(
 		AllowedHeaders: []string{"Content-Type", "Authorization"},
 	}))
 
-	// Health check
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// --- Projets ETL ---
 	ph := NewProjectHandler(projectStore, connManager, log)
 	r.Route("/api/v1/projects", func(pr chi.Router) {
 		pr.Get("/", ph.List)
@@ -46,12 +44,11 @@ func NewRouter(
 		pr.Delete("/{projectID}", ph.Delete)
 		pr.Post("/{projectID}/run", ph.Run)
 		pr.Get("/{projectID}/xml", ph.ExportXML)
+		pr.Get("/{projectID}/csv-preview", ph.CSVPreview)
 	})
 
-	// --- Catalogue des blocs ---
 	r.Get("/api/v1/catalogue", ph.Catalogue)
 
-	// --- Connexions multi-env ---
 	ch := NewConnectionHandler(connManager, log)
 	r.Route("/api/v1/connections", func(cr chi.Router) {
 		cr.Get("/", ch.List)
@@ -62,7 +59,6 @@ func NewRouter(
 		cr.Post("/{connID}/test", ch.Test)
 	})
 
-	// --- Switch d'environnement ---
 	r.Get("/api/v1/environment", ch.GetEnv)
 	r.Put("/api/v1/environment", ch.SwitchEnv)
 

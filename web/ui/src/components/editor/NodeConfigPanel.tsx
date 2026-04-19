@@ -1,8 +1,8 @@
-import { useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Node, Dispatch, SetStateAction } from 'react'
 import { useEditorStore } from '@/store/editorStore'
 import { useNodeValidation } from '@/hooks/useNodeValidation'
-import { X, Trash2, AlertTriangle, CheckCircle2, FolderOpen } from 'lucide-react'
+import { X, Trash2, AlertTriangle, CheckCircle2, FolderOpen, RefreshCcw, Eye } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Badge from '@/components/ui/Badge'
 
@@ -23,6 +23,8 @@ function updateParam(nodeId: string, key: string, value: string, setNodes: Dispa
 export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
   const { catalogue, selectNode } = useEditorStore()
   const node = nodes.find(n => n.id === nodeId)
+  const [preview, setPreview] = useState<{ columns: string[]; rows: Record<string, string>[]; error?: string } | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
   if (!node) return null
 
   const meta = catalogue.find((b: any) => b.type === node.data.blockType)
@@ -30,6 +32,12 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
 
   const validationMap = useNodeValidation(nodes)
   const validation = validationMap.get(nodeId)
+
+  const projectId = useMemo(() => {
+    const path = window.location.pathname
+    const match = path.match(/projects\/([^/]+)/)
+    return match?.[1] ?? 'local'
+  }, [])
 
   const handleDelete = () => {
     setNodes(nds => nds.filter(n => n.id !== nodeId))
@@ -39,10 +47,66 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
   const paramFields = getParamFields(node.data.blockType as string)
   const isFilePathField = (key: string) => key === 'path'
   const isCSVBlock = ['source.csv', 'target.csv'].includes(node.data.blockType as string)
+  const isCSVSource = (node.data.blockType as string) === 'source.csv'
+
+  const runCSVPreview = async () => {
+    if (!params.path) {
+      setPreview({ columns: [], rows: [], error: 'Le chemin du fichier est requis pour la prévisualisation.' })
+      return
+    }
+    setPreviewLoading(true)
+    try {
+      const query = new URLSearchParams({
+        path: params.path ?? '',
+        delimiter: params.delimiter ?? ',',
+        encoding: params.encoding ?? 'utf-8',
+        newline: params.newline ?? 'auto',
+        has_header: params.has_header ?? 'true',
+        headers: params.headers ?? '',
+        lazy_quotes: params.lazy_quotes ?? 'true',
+        trim_leading_space: params.trim_leading_space ?? 'true',
+        skip_empty_lines: params.skip_empty_lines ?? 'true',
+        fields_per_record: params.fields_per_record ?? '-1',
+        limit: '20',
+      })
+      const res = await fetch(`/api/v1/projects/${projectId}/csv-preview?${query.toString()}`)
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        setPreview({ columns: [], rows: [], error: data.error ?? 'Erreur de prévisualisation' })
+      } else {
+        setPreview({ columns: data.columns ?? [], rows: data.rows ?? [] })
+      }
+    } catch (e: any) {
+      setPreview({ columns: [], rows: [], error: e?.message ?? 'Erreur réseau' })
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (isCSVSource && params.path) {
+      void runCSVPreview()
+    } else {
+      setPreview(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    nodeId,
+    isCSVSource,
+    params.path,
+    params.delimiter,
+    params.encoding,
+    params.newline,
+    params.has_header,
+    params.headers,
+    params.lazy_quotes,
+    params.trim_leading_space,
+    params.fields_per_record,
+  ])
 
   return (
-    <aside className="w-80 flex-shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col overflow-y-auto">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+    <aside className="w-[26rem] flex-shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col overflow-y-auto">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 sticky top-0 bg-gray-900 z-10">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-gray-100">{node.data.label as string}</span>
           {meta && <Badge category={(meta as any).category} />}
@@ -60,8 +124,7 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
         }`}>
           {validation.valid
             ? <><CheckCircle2 size={13} className="mt-0.5 flex-shrink-0" /> Bloc correctement configuré</>
-            : <><AlertTriangle size={13} className="mt-0.5 flex-shrink-0" /> Champs manquants : <strong className="ml-1">{validation.missing.join(', ')}</strong></>
-          }
+            : <><AlertTriangle size={13} className="mt-0.5 flex-shrink-0" /> Champs manquants : <strong className="ml-1">{validation.missing.join(', ')}</strong></>}
         </div>
       )}
 
@@ -90,7 +153,7 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
         )}
 
         {paramFields.map(f => (
-          <Field key={f.key} label={f.label} required={f.required} missing={validation?.missing.includes(f.key)}>
+          <Field key={f.key} label={f.label} required={f.required} missing={validation?.missing.includes(f.key)} help={f.help}>
             {isCSVBlock && isFilePathField(f.key) ? (
               <FilePickerInput
                 value={params[f.key] ?? ''}
@@ -127,6 +190,51 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
           </Field>
         ))}
 
+        {isCSVSource && (
+          <div className="rounded-xl border border-gray-800 bg-gray-950 overflow-hidden">
+            <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm text-gray-200">
+                <Eye size={14} /> Prévisualisation CSV
+              </div>
+              <button
+                type="button"
+                onClick={() => void runCSVPreview()}
+                className="text-xs px-2 py-1 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-300 flex items-center gap-1"
+              >
+                <RefreshCcw size={12} className={previewLoading ? 'animate-spin' : ''} /> Actualiser
+              </button>
+            </div>
+            {preview?.error ? (
+              <div className="p-3 text-xs text-red-300 bg-red-950/30">{preview.error}</div>
+            ) : previewLoading ? (
+              <div className="p-3 text-xs text-gray-400">Chargement de la prévisualisation…</div>
+            ) : preview && preview.columns.length > 0 ? (
+              <div className="overflow-auto max-h-80">
+                <table className="min-w-full text-xs">
+                  <thead className="sticky top-0 bg-gray-900 z-10">
+                    <tr>
+                      {preview.columns.map(col => (
+                        <th key={col} className="px-3 py-2 text-left text-gray-300 border-b border-gray-800 whitespace-nowrap">{col}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.rows.map((row, idx) => (
+                      <tr key={idx} className="odd:bg-gray-950 even:bg-gray-900/50">
+                        {preview.columns.map(col => (
+                          <td key={col} className="px-3 py-2 border-b border-gray-800 text-gray-200 whitespace-nowrap">{String(row[col] ?? '')}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="p-3 text-xs text-gray-500">Renseigne le chemin puis ajuste l'encodage, le délimiteur et les en-têtes pour voir un aperçu des 20 premières lignes.</div>
+            )}
+          </div>
+        )}
+
         <div className="pt-2 border-t border-gray-800">
           <p className="text-xs text-gray-600 font-mono">{node.data.blockType as string}</p>
           {meta && <p className="text-xs text-gray-600 mt-1">{(meta as any).description}</p>}
@@ -142,9 +250,6 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
   )
 }
 
-// FilePickerInput : champ texte libre (chemin serveur) + bouton parcourir.
-// Le bouton parcourir est indicatif ; le chemin doit être saisi manuellement
-// car le serveur Go accède au fichier via son système de fichiers local.
 function FilePickerInput({
   value, invalid, onChange, placeholder
 }: {
@@ -158,9 +263,6 @@ function FilePickerInput({
   const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    // Utilise le chemin absolu (Electron) si disponible, sinon le nom du fichier
-    // Note : en navigateur standard, seul file.name est accessible (pas le chemin complet)
-    // L'utilisateur peut corriger le chemin manuellement dans le champ texte
     const path = (file as any).path || file.name
     onChange(path)
   }
@@ -202,11 +304,12 @@ function inputCls(invalid = false) {
 }
 
 function Field({
-  label, required, missing, children,
+  label, required, missing, help, children,
 }: {
   label: string
   required?: boolean
   missing?: boolean
+  help?: string
   children: React.ReactNode
 }) {
   return (
@@ -217,6 +320,7 @@ function Field({
         {missing && <span className="text-red-400 text-xs ml-auto">requis</span>}
       </label>
       {children}
+      {help && <p className="mt-1 text-[11px] text-gray-500">{help}</p>}
     </div>
   )
 }
@@ -234,13 +338,69 @@ interface ParamField {
   required?: boolean
   type?: 'text' | 'select'
   options?: SelectOption[]
+  help?: string
 }
 
 function getParamFields(blockType: string): ParamField[] {
   switch (blockType) {
     case 'source.csv': return [
-      { key: 'path', label: 'Chemin fichier', placeholder: '/data/input.csv', required: true },
-      { key: 'delimiter', label: 'Délimiteur', placeholder: ',' },
+      { key: 'path', label: 'Chemin fichier', placeholder: '/data/input.csv', required: true, help: 'Chemin accessible par le backend Go sur la machine serveur.' },
+      {
+        key: 'encoding', label: 'Encodage', required: true, type: 'select', help: 'Choisir l’encodage réel du fichier pour éviter les caractères illisibles.',
+        options: [
+          { value: 'utf-8', label: 'UTF-8' },
+          { value: 'windows-1252', label: 'Windows-1252' },
+          { value: 'iso-8859-1', label: 'ISO-8859-1 / Latin-1' },
+          { value: 'utf-16le', label: 'UTF-16 LE' },
+          { value: 'utf-16be', label: 'UTF-16 BE' },
+        ],
+      },
+      {
+        key: 'delimiter', label: 'Délimiteur', help: 'Exemples : , ; | ou tab', type: 'select',
+        options: [
+          { value: ',', label: 'Virgule (,)' },
+          { value: ';', label: 'Point-virgule (;)' },
+          { value: '|', label: 'Pipe (|)' },
+          { value: '\t', label: 'Tabulation (TAB)' },
+        ],
+      },
+      {
+        key: 'newline', label: 'Retour à la ligne', type: 'select', help: 'Auto convient dans la majorité des cas. Utiliser CR pour anciens exports Mac.',
+        options: [
+          { value: 'auto', label: 'Auto (LF / CRLF)' },
+          { value: 'cr', label: 'CR uniquement (ancien Mac)' },
+        ],
+      },
+      {
+        key: 'has_header', label: 'Présence d’en-tête', required: true, type: 'select', help: 'Si Non, il faut renseigner les noms de colonnes manuellement.',
+        options: [
+          { value: 'true', label: 'Oui, la première ligne contient les colonnes' },
+          { value: 'false', label: 'Non, le fichier commence directement par les données' },
+        ],
+      },
+      { key: 'headers', label: 'Colonnes manuelles', placeholder: 'id,name,amount', help: 'Obligatoire si le fichier ne contient pas d’en-tête.' },
+      {
+        key: 'skip_empty_lines', label: 'Ignorer lignes vides', type: 'select',
+        options: [
+          { value: 'true', label: 'Oui' },
+          { value: 'false', label: 'Non' },
+        ],
+      },
+      {
+        key: 'trim_leading_space', label: 'Supprimer espaces de début', type: 'select',
+        options: [
+          { value: 'true', label: 'Oui' },
+          { value: 'false', label: 'Non' },
+        ],
+      },
+      {
+        key: 'lazy_quotes', label: 'Tolérance guillemets imparfaits', type: 'select', help: 'Pratique pour des CSV sales issus d’exports métiers.',
+        options: [
+          { value: 'true', label: 'Oui' },
+          { value: 'false', label: 'Non' },
+        ],
+      },
+      { key: 'fields_per_record', label: 'Nb champs attendu', placeholder: '-1', help: '-1 = variable ; sinon impose un nombre fixe de colonnes.' },
     ]
     case 'source.postgres':
     case 'source.mysql':
