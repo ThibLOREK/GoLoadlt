@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/csv"
 	"fmt"
@@ -12,8 +11,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
-	"golang.org/x/text/encoding/charmap"
-	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 )
 
@@ -24,17 +21,17 @@ type csvScanResponse struct {
 }
 
 type csvScanMeta struct {
-	Path              string     `json:"path"`
-	Encoding          string     `json:"encoding"`
-	Delimiter         string     `json:"delimiter"`
-	Newline           string     `json:"newline"`
-	HasHeader         bool       `json:"hasHeader"`
-	Headers           []string   `json:"headers"`
-	DetectedColumns   int        `json:"detectedColumns"`
-	SampleLines       []string   `json:"sampleLines"`
-	Confidence        string     `json:"confidence"`
-	SuggestedParams   scanParams `json:"suggestedParams"`
-	Warnings          []string   `json:"warnings"`
+	Path            string     `json:"path"`
+	Encoding        string     `json:"encoding"`
+	Delimiter       string     `json:"delimiter"`
+	Newline         string     `json:"newline"`
+	HasHeader       bool       `json:"hasHeader"`
+	Headers         []string   `json:"headers"`
+	DetectedColumns int        `json:"detectedColumns"`
+	SampleLines     []string   `json:"sampleLines"`
+	Confidence      string     `json:"confidence"`
+	SuggestedParams scanParams `json:"suggestedParams"`
+	Warnings        []string   `json:"warnings"`
 }
 
 type scanParams struct {
@@ -68,17 +65,17 @@ func (h *ProjectHandler) CSVScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	enc := detectEncoding(raw)
-	newline := detectNewline(raw)
-	decoded, err := decodeBytes(raw, enc)
+	enc := detectScanEncoding(raw)
+	newline := detectScanNewline(raw)
+	decoded, err := decodeScanBytes(raw, enc)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, csvScanResponse{Success: false, Error: fmt.Sprintf("decodage fichier: %v", err)})
 		return
 	}
 
-	sampleLines := firstNonEmptyLines(decoded, 5)
-	delimiter, confidence := detectDelimiter(sampleLines)
-	parsedRows, err := parseSampleRows(decoded, delimiter, newline, 5)
+	sampleLines := scanFirstNonEmptyLines(decoded, 5)
+	delimiter, confidence := detectScanDelimiter(sampleLines)
+	parsedRows, err := parseScanSampleRows(decoded, delimiter, 5)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, csvScanResponse{Success: false, Error: fmt.Sprintf("analyse csv: %v", err)})
 		return
@@ -88,9 +85,9 @@ func (h *ProjectHandler) CSVScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detectedColumns := maxColumns(parsedRows)
-	hasHeader := detectHasHeader(parsedRows)
-	headers := buildHeaders(parsedRows, hasHeader, detectedColumns)
+	detectedColumns := scanMaxColumns(parsedRows)
+	hasHeader := detectScanHasHeader(parsedRows)
+	headers := buildScanHeaders(parsedRows, hasHeader, detectedColumns)
 
 	warnings := make([]string, 0)
 	if confidence != "high" {
@@ -116,7 +113,7 @@ func (h *ProjectHandler) CSVScan(w http.ResponseWriter, r *http.Request) {
 				Encoding:         enc,
 				Delimiter:        string(delimiter),
 				Newline:          newline,
-				HasHeader:        boolString(hasHeader),
+				HasHeader:        scanBoolString(hasHeader),
 				Headers:          strings.Join(headers, ","),
 				LazyQuotes:       "true",
 				TrimLeadingSpace: "true",
@@ -128,7 +125,9 @@ func (h *ProjectHandler) CSVScan(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func detectEncoding(raw []byte) string {
+// --- helpers scan (prefixes "scan" pour eviter conflits avec csv_preview_handler) ---
+
+func detectScanEncoding(raw []byte) string {
 	if len(raw) >= 2 {
 		if raw[0] == 0xFF && raw[1] == 0xFE {
 			return "utf-16le"
@@ -146,19 +145,16 @@ func detectEncoding(raw []byte) string {
 	return "windows-1252"
 }
 
-func detectNewline(raw []byte) string {
-	if bytes.Contains(raw, []byte("\r\n")) || bytes.Contains(raw, []byte("\n")) {
-		return "auto"
-	}
-	if bytes.Contains(raw, []byte("\r")) {
+func detectScanNewline(raw []byte) string {
+	if bytes.Contains(raw, []byte("\r")) && !bytes.Contains(raw, []byte("\r\n")) {
 		return "cr"
 	}
 	return "auto"
 }
 
-func decodeBytes(raw []byte, enc string) (string, error) {
+func decodeScanBytes(raw []byte, enc string) (string, error) {
 	var reader io.Reader = bytes.NewReader(raw)
-	if decoder := decoderForScanEncoding(enc); decoder != nil {
+	if decoder := decoderForEncodingPreview(enc); decoder != nil {
 		reader = transform.NewReader(reader, decoder)
 	}
 	buf, err := io.ReadAll(reader)
@@ -168,24 +164,7 @@ func decodeBytes(raw []byte, enc string) (string, error) {
 	return string(buf), nil
 }
 
-func decoderForScanEncoding(enc string) transform.Transformer {
-	switch strings.ToLower(strings.TrimSpace(enc)) {
-	case "utf-8", "utf8":
-		return nil
-	case "utf-16le":
-		return unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder()
-	case "utf-16be":
-		return unicode.UTF16(unicode.BigEndian, unicode.UseBOM).NewDecoder()
-	case "windows-1252", "cp1252":
-		return charmap.Windows1252.NewDecoder()
-	case "iso-8859-1", "latin1":
-		return charmap.ISO8859_1.NewDecoder()
-	default:
-		return nil
-	}
-}
-
-func firstNonEmptyLines(content string, limit int) []string {
+func scanFirstNonEmptyLines(content string, limit int) []string {
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	content = strings.ReplaceAll(content, "\r", "\n")
 	parts := strings.Split(content, "\n")
@@ -203,15 +182,15 @@ func firstNonEmptyLines(content string, limit int) []string {
 	return out
 }
 
-func detectDelimiter(lines []string) (rune, string) {
+func detectScanDelimiter(lines []string) (rune, string) {
 	candidates := []rune{',', ';', '|', '\t'}
 	best := ','
 	bestScore := -1
-	bestConsistency := -1
+	bestConsistency := 999
 	for _, cand := range candidates {
 		counts := make([]int, 0, len(lines))
 		for _, line := range lines {
-			counts = append(counts, countFieldsForDelimiter(line, cand))
+			counts = append(counts, scanCountFieldsForDelimiter(line, cand))
 		}
 		if len(counts) == 0 {
 			continue
@@ -239,13 +218,13 @@ func detectDelimiter(lines []string) (rune, string) {
 	confidence := "medium"
 	if bestScore >= len(lines)*3 && bestConsistency <= 1 {
 		confidence = "high"
-		} else if bestScore <= len(lines) {
+	} else if bestScore <= len(lines) {
 		confidence = "low"
 	}
 	return best, confidence
 }
 
-func countFieldsForDelimiter(line string, delimiter rune) int {
+func scanCountFieldsForDelimiter(line string, delimiter rune) int {
 	r := csv.NewReader(strings.NewReader(line))
 	r.Comma = delimiter
 	r.LazyQuotes = true
@@ -256,13 +235,10 @@ func countFieldsForDelimiter(line string, delimiter rune) int {
 	return len(rec)
 }
 
-func parseSampleRows(content string, delimiter rune, newline string, limit int) ([][]string, error) {
-	reader := bufio.NewReader(strings.NewReader(content))
-	var rr io.Reader = reader
-	if newline == "cr" {
-		rr = newCRToLFReaderPreview(reader)
-	}
-	csvReader := csv.NewReader(rr)
+func parseScanSampleRows(content string, delimiter rune, limit int) ([][]string, error) {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+	csvReader := csv.NewReader(strings.NewReader(content))
 	csvReader.Comma = delimiter
 	csvReader.LazyQuotes = true
 	csvReader.TrimLeadingSpace = true
@@ -275,24 +251,21 @@ func parseSampleRows(content string, delimiter rune, newline string, limit int) 
 		if err != nil {
 			return nil, err
 		}
-		if isEmptyScanRecord(rec) {
-			continue
+		empty := true
+		for _, v := range rec {
+			if strings.TrimSpace(v) != "" {
+				empty = false
+				break
+			}
 		}
-		rows = append(rows, rec)
+		if !empty {
+			rows = append(rows, rec)
+		}
 	}
 	return rows, nil
 }
 
-func isEmptyScanRecord(rec []string) bool {
-	for _, v := range rec {
-		if strings.TrimSpace(v) != "" {
-			return false
-		}
-	}
-	return true
-}
-
-func maxColumns(rows [][]string) int {
+func scanMaxColumns(rows [][]string) int {
 	max := 0
 	for _, row := range rows {
 		if len(row) > max {
@@ -302,7 +275,7 @@ func maxColumns(rows [][]string) int {
 	return max
 }
 
-func detectHasHeader(rows [][]string) bool {
+func detectScanHasHeader(rows [][]string) bool {
 	if len(rows) < 2 {
 		return true
 	}
@@ -318,30 +291,30 @@ func detectHasHeader(rows [][]string) bool {
 		if i < len(second) {
 			v2 = strings.TrimSpace(second[i])
 		}
-		if looksLikeHeaderValue(v1) && !looksLikeHeaderValue(v2) {
+		if scanLooksLikeHeader(v1) && !scanLooksLikeHeader(v2) {
 			headerish++
 		}
 	}
-	return headerish >= max(1, len(first)/2)
+	threshold := len(first) / 2
+	if threshold < 1 {
+		threshold = 1
+	}
+	return headerish >= threshold
 }
 
-func looksLikeHeaderValue(v string) bool {
+func scanLooksLikeHeader(v string) bool {
 	if v == "" {
 		return false
 	}
-	lower := strings.ToLower(v)
-	if strings.Contains(lower, " ") || strings.Contains(lower, "_") {
-		return true
-	}
-	for _, r := range lower {
-		if (r >= 'a' && r <= 'z') || r == '_' {
+	for _, r := range strings.ToLower(v) {
+		if (r >= 'a' && r <= 'z') || r == '_' || r == ' ' {
 			return true
 		}
 	}
 	return false
 }
 
-func buildHeaders(rows [][]string, hasHeader bool, detectedColumns int) []string {
+func buildScanHeaders(rows [][]string, hasHeader bool, detectedColumns int) []string {
 	if detectedColumns <= 0 {
 		return nil
 	}
@@ -360,22 +333,15 @@ func buildHeaders(rows [][]string, hasHeader bool, detectedColumns int) []string
 		return headers
 	}
 	headers := make([]string, detectedColumns)
-	for i := 0; i < detectedColumns; i++ {
+	for i := range headers {
 		headers[i] = fmt.Sprintf("column_%d", i+1)
 	}
 	return headers
 }
 
-func boolString(v bool) string {
+func scanBoolString(v bool) string {
 	if v {
 		return "true"
 	}
 	return "false"
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

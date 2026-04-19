@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -49,7 +50,6 @@ func (h *ProjectHandler) CSVPreview(w http.ResponseWriter, r *http.Request) {
 		previewLimit = 20
 	}
 
-	// has_header : meme logique que csv.go — tout sauf false/0/no/non = true
 	v := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("has_header")))
 	explicitlyFalse := v == "false" || v == "0" || v == "no" || v == "non"
 	hasHeader := !explicitlyFalse
@@ -62,23 +62,41 @@ func (h *ProjectHandler) CSVPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 
-	var rr io.Reader = f
+	// Lire tout le contenu en memoire pour pouvoir rejouer la premiere ligne si besoin
+	rawContent, err := io.ReadAll(f)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, csvPreviewResponse{Success: false, Error: fmt.Sprintf("lecture fichier: %v", err)})
+		return
+	}
+
+	var rr io.Reader = bytes.NewReader(rawContent)
 	if decoder := decoderForEncodingPreview(encodingName); decoder != nil {
 		rr = transform.NewReader(rr, decoder)
 	}
-	br := bufio.NewReader(rr)
-	if newline == "cr" {
-		br = bufio.NewReader(newCRToLFReaderPreview(br))
+	decodedBytes, err := io.ReadAll(rr)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, csvPreviewResponse{Success: false, Error: fmt.Sprintf("decodage fichier: %v", err)})
+		return
 	}
 
-	reader := csv.NewReader(br)
+	// Normaliser les retours a la ligne
+	if newline == "cr" {
+		decodedBytes = bytes.ReplaceAll(decodedBytes, []byte{'\r'}, []byte{'\n'})
+	} else {
+		decodedBytes = bytes.ReplaceAll(decodedBytes, []byte("\r\n"), []byte{'\n'})
+		decodedBytes = bytes.ReplaceAll(decodedBytes, []byte{'\r'}, []byte{'\n'})
+	}
+
+	reader := csv.NewReader(bytes.NewReader(decodedBytes))
 	reader.Comma = delimiter
 	reader.LazyQuotes = parseBoolDefaultPreview(r.URL.Query().Get("lazy_quotes"), true)
 	reader.TrimLeadingSpace = parseBoolDefaultPreview(r.URL.Query().Get("trim_leading_space"), true)
 	reader.FieldsPerRecord = parseIntDefaultPreview(r.URL.Query().Get("fields_per_record"), -1)
 
 	var columns []string
+
 	if hasHeader {
+		// Lire la ligne d'en-tete
 		columns, err = reader.Read()
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, csvPreviewResponse{Success: false, Error: fmt.Sprintf("lecture en-tete: %v", err)})
@@ -91,20 +109,36 @@ func (h *ProjectHandler) CSVPreview(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else if len(customHeaders) > 0 {
+		// En-tetes fournies manuellement, on les utilise directement
 		columns = customHeaders
 	} else {
-		// Peek la premiere ligne pour connaitre le nombre de colonnes.
-		firstRec, err := reader.Read()
+		// Pas d'en-tete, pas de headers manuels :
+		// On lit une premiere ligne UNIQUEMENT pour compter les colonnes,
+		// puis on REPART depuis le debut du contenu decoded pour ne pas perdre cette ligne.
+		peekReader := csv.NewReader(bytes.NewReader(decodedBytes))
+		peekReader.Comma = delimiter
+		peekReader.LazyQuotes = true
+		peekReader.TrimLeadingSpace = true
+		peekReader.FieldsPerRecord = -1
+		firstRec, err := peekReader.Read()
 		if err != nil && err != io.EOF {
 			writeJSON(w, http.StatusBadRequest, csvPreviewResponse{Success: false, Error: fmt.Sprintf("lecture premiere ligne: %v", err)})
 			return
 		}
-		columns = make([]string, len(firstRec))
-		for i := range firstRec {
+		nbCols := len(firstRec)
+		if nbCols == 0 {
+			nbCols = 1
+		}
+		columns = make([]string, nbCols)
+		for i := range columns {
 			columns[i] = fmt.Sprintf("column_%d", i+1)
 		}
-		// La premiere ligne est perdue ici (meme comportement que csv.go).
-		// L'utilisateur doit renseigner 'headers' pour eviter ca.
+		// Repartir depuis le debut : reconstruire le reader sur le meme contenu
+		reader = csv.NewReader(bytes.NewReader(decodedBytes))
+		reader.Comma = delimiter
+		reader.LazyQuotes = parseBoolDefaultPreview(r.URL.Query().Get("lazy_quotes"), true)
+		reader.TrimLeadingSpace = parseBoolDefaultPreview(r.URL.Query().Get("trim_leading_space"), true)
+		reader.FieldsPerRecord = parseIntDefaultPreview(r.URL.Query().Get("fields_per_record"), -1)
 	}
 
 	if len(columns) == 0 {
