@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState } from 'react'
+import { useEffect, useCallback, useState, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ReactFlow,
@@ -29,9 +29,7 @@ import type { ETLNode, ETLEdge, Project } from '@/types/api'
 
 const nodeTypes = { etlBlock: ETLBlockNode }
 
-// Style d'un edge normal
 const EDGE_STYLE_ACTIVE   = { stroke: '#4f7bff', strokeWidth: 2 }
-// Style d'un edge désactivé (pointillé gris)
 const EDGE_STYLE_DISABLED = { stroke: '#4b5563', strokeWidth: 2, strokeDasharray: '6 3', opacity: 0.45 }
 
 function toRFNodes(etlNodes: ETLNode[]) {
@@ -44,6 +42,7 @@ function toRFNodes(etlNodes: ETLNode[]) {
       blockType: n.type,
       connRef: n.connectionRef ?? '',
       params: Object.fromEntries((n.params ?? []).map(p => [p.name, p.value])),
+      disabled: false,
     },
   }))
 }
@@ -84,6 +83,41 @@ function toETLEdges(rfEdges: RFEdge[]): ETLEdge[] {
   }))
 }
 
+/**
+ * Calcule l'ensemble des nodeIDs qui sont "désactivés" :
+ * un nœud est désactivé si TOUS ses edges entrants sont désactivés
+ * (ou s'il n'a aucun edge entrant mais qu'un edge sortant est désactivé
+ * et qu'il n'a pas d'autre connexion active).
+ *
+ * Règle simplifiée et intuitive :
+ * Un nœud est marqué désactivé si :
+ *   - Il possède au moins un edge (entrant ou sortant)
+ *   - ET tous les edges qui le concernent sont disabled
+ */
+function computeDisabledNodes(edges: RFEdge[]): Set<string> {
+  // Pour chaque nœud, compter edges actifs et edges totaux le concernant.
+  const totalEdges: Record<string, number> = {}
+  const activeEdges: Record<string, number> = {}
+
+  for (const e of edges) {
+    for (const nodeId of [e.source, e.target]) {
+      totalEdges[nodeId] = (totalEdges[nodeId] ?? 0) + 1
+      if (!(e.data as any)?.disabled) {
+        activeEdges[nodeId] = (activeEdges[nodeId] ?? 0) + 1
+      }
+    }
+  }
+
+  const disabled = new Set<string>()
+  for (const [nodeId, total] of Object.entries(totalEdges)) {
+    const active = activeEdges[nodeId] ?? 0
+    if (total > 0 && active === 0) {
+      disabled.add(nodeId)
+    }
+  }
+  return disabled
+}
+
 export default function EditorPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const navigate = useNavigate()
@@ -92,15 +126,28 @@ export default function EditorPage() {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
 
-  // Preview
   const [preview, setPreview] = useState<Record<string, Record<string, any>[]> | null>(null)
   const [showPreview, setShowPreview] = useState(false)
 
-  // Validation globale
-  const validationMap = useNodeValidation(nodes)
-  const invalidCount = [...validationMap.values()].filter(v => !v.valid).length
+  // Calcul des nœuds désactivés (tous leurs liens sont disabled).
+  const disabledNodeIds = useMemo(() => computeDisabledNodes(edges), [edges])
 
-  useEffect(() => { storeSetNodes(nodes) }, [nodes])
+  // Appliquer l'état disabled sur les nodes ReactFlow pour le rendu visuel.
+  const nodesWithDisabledState = useMemo(
+    () => nodes.map(n => ({
+      ...n,
+      data: { ...n.data, disabled: disabledNodeIds.has(n.id) },
+    })),
+    [nodes, disabledNodeIds]
+  )
+
+  // Validation : exclure les nœuds désactivés.
+  const validationMap = useNodeValidation(nodesWithDisabledState)
+  const invalidCount = [...validationMap.entries()]
+    .filter(([nodeId, v]) => !v.valid && !disabledNodeIds.has(nodeId))
+    .length
+
+  useEffect(() => { storeSetNodes(nodesWithDisabledState) }, [nodesWithDisabledState])
   useAutoSave(projectId, nodes, edges)
 
   useEffect(() => {
@@ -121,7 +168,7 @@ export default function EditorPage() {
     [setEdges]
   )
 
-  // Clic droit sur un edge : bascule activé / désactivé
+  // Clic droit sur un edge : bascule activé / désactivé.
   const onEdgeContextMenu = useCallback(
     (event: React.MouseEvent, edge: RFEdge) => {
       event.preventDefault()
@@ -142,21 +189,41 @@ export default function EditorPage() {
     [setEdges]
   )
 
+  // Suppression d'un nœud : nettoyer aussi tous les edges qui le référencent
+  // pour éviter les edges orphelins en mémoire côté frontend.
+  const onNodesChangeClean = useCallback(
+    (changes: any[]) => {
+      const removedIds = new Set(
+        changes.filter(c => c.type === 'remove').map(c => c.id)
+      )
+      if (removedIds.size > 0) {
+        setEdges(eds => eds.filter(e => !removedIds.has(e.source) && !removedIds.has(e.target)))
+      }
+      onNodesChange(changes)
+      markDirty()
+    },
+    [onNodesChange, setEdges, markDirty]
+  )
+
   const handleSave = async () => {
     if (!project || !projectId) return
+    // Filtrer les edges dont les nœuds existent encore avant de sauvegarder.
+    const nodeIds = new Set(nodes.map(n => n.id))
+    const cleanEdges = edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target))
     const updated: Project = {
       ...project,
       nodes: toETLNodes(nodes),
-      edges: toETLEdges(edges),
+      edges: toETLEdges(cleanEdges),
     }
     await updateProject(projectId, updated)
     setProject(updated)
+    setEdges(cleanEdges)
     markClean()
   }
 
   const handleRun = async () => {
     if (invalidCount > 0) {
-      const ok = confirm(`${invalidCount} bloc(s) ont des paramètres manquants. Exécuter quand même ?`)
+      const ok = confirm(`${invalidCount} bloc(s) actifs ont des paramètres manquants. Exécuter quand même ?`)
       if (!ok) return
     }
     await handleSave()
@@ -183,7 +250,7 @@ export default function EditorPage() {
       const id = `node-${Date.now()}`
       setNodes(nds => [
         ...nds,
-        { id, type: 'etlBlock', position, data: { label: blockType.split('.').pop() ?? blockType, blockType, connRef: '', params: {} } },
+        { id, type: 'etlBlock', position, data: { label: blockType.split('.').pop() ?? blockType, blockType, connRef: '', params: {}, disabled: false } },
       ])
       markDirty()
     },
@@ -217,7 +284,6 @@ export default function EditorPage() {
           )}
 
           <div className="ml-auto flex gap-2 items-center">
-            {/* Bouton aperçu (visible après un run) */}
             {preview && (
               <Button
                 size="sm"
@@ -234,17 +300,15 @@ export default function EditorPage() {
           </div>
         </div>
 
-        {/* Tooltip d'aide pour les edges */}
         <div className="text-center text-xs text-gray-700 py-0.5 bg-gray-900/50 border-b border-gray-800/50 select-none">
-          Clic droit sur un lien pour l’activer / désactiver
+          Clic droit sur un lien pour l'activer / désactiver · Suppr pour effacer un élément sélectionné
         </div>
 
-        {/* Canvas ReactFlow */}
         <div className="flex-1" onDrop={onDrop} onDragOver={e => e.preventDefault()}>
           <ReactFlow
-            nodes={nodes}
+            nodes={nodesWithDisabledState}
             edges={edges}
-            onNodesChange={(changes) => { onNodesChange(changes); markDirty() }}
+            onNodesChange={onNodesChangeClean}
             onEdgesChange={(changes) => { onEdgesChange(changes); markDirty() }}
             onConnect={onConnect}
             onNodeClick={(_, node) => selectNode(node.id)}
@@ -261,11 +325,10 @@ export default function EditorPage() {
           </ReactFlow>
         </div>
 
-        {/* Panel de prévisualisation des données (style Pentaho PDI) */}
         {showPreview && preview && (
           <DataPreviewPanel
             preview={preview}
-            nodes={nodes as any}
+            nodes={nodesWithDisabledState as any}
             onClose={() => setShowPreview(false)}
           />
         )}
