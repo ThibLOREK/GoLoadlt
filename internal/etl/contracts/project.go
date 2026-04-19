@@ -39,8 +39,9 @@ type Param struct {
 
 // Edge représente un lien dirigé entre deux blocs.
 type Edge struct {
-	From     string `xml:"from,attr"             json:"from"`
-	To       string `xml:"to,attr"               json:"to"`
-	FromPort string `xml:"fromPort,attr,omitempty" json:"fromPort,omitempty"`
-	ToPort   string `xml:"toPort,attr,omitempty"   json:"toPort,omitempty"`
+	From     string `xml:"from,attr"               json:"from"`
+	To       string `xml:"to,attr"                 json:"to"`
+	FromPort string `xml:"fromPort,attr,omitempty"  json:"fromPort,omitempty"`
+	ToPort   string `xml:"toPort,attr,omitempty"    json:"toPort,omitempty"`
+	Disabled bool   `xml:"disabled,attr,omitempty" json:"disabled,omitempty"` // flux désactivé sans suppression
 }

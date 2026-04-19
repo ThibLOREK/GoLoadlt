@@ -39,10 +39,12 @@ type Port struct {
 type BlockContext struct {
 	Ctx       context.Context
 	Params    map[string]string
-	ConnRef   string   // référence à une connexion réutilisable
-	ActiveEnv string   // environnement actif : dev, preprod, prod
-	Inputs    []*Port  // ports d'entrée
-	Outputs   []*Port  // ports de sortie
+	ConnRef   string        // référence à une connexion réutilisable
+	ActiveEnv string        // environnement actif : dev, preprod, prod
+	BlockID   string        // ID unique du bloc dans le projet
+	Preview   *PreviewStore // capture des N premières lignes de sortie
+	Inputs    []*Port       // ports d'entrée
+	Outputs   []*Port       // ports de sortie
 }
 
 // Block est l'interface que tout nœud du graphe ETL doit implémenter.
