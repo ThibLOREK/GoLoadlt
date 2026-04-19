@@ -45,6 +45,7 @@ func NewRouter(
 		pr.Post("/{projectID}/run", ph.Run)
 		pr.Get("/{projectID}/xml", ph.ExportXML)
 		pr.Get("/{projectID}/csv-preview", ph.CSVPreview)
+		pr.Get("/{projectID}/csv-scan", ph.CSVScan)
 	})
 
 	r.Get("/api/v1/catalogue", ph.Catalogue)

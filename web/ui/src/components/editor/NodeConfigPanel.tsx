@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Node, Dispatch, SetStateAction } from 'react'
 import { useEditorStore } from '@/store/editorStore'
 import { useNodeValidation } from '@/hooks/useNodeValidation'
-import { X, Trash2, AlertTriangle, CheckCircle2, FolderOpen, RefreshCcw, Eye } from 'lucide-react'
+import { X, Trash2, AlertTriangle, CheckCircle2, FolderOpen, RefreshCcw, Eye, Sparkles } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Badge from '@/components/ui/Badge'
 
@@ -20,11 +20,22 @@ function updateParam(nodeId: string, key: string, value: string, setNodes: Dispa
   }))
 }
 
+function mergeParams(nodeId: string, patch: Record<string, string>, setNodes: Dispatch<SetStateAction<Node[]>>) {
+  setNodes(nds => nds.map(n => {
+    if (n.id !== nodeId) return n
+    const current = (n.data.params as Record<string, string> ?? {})
+    const params = { ...current, ...patch }
+    return { ...n, data: { ...n.data, params } }
+  }))
+}
+
 export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
   const { catalogue, selectNode } = useEditorStore()
   const node = nodes.find(n => n.id === nodeId)
   const [preview, setPreview] = useState<{ columns: string[]; rows: Record<string, string>[]; error?: string } | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [scanLoading, setScanLoading] = useState(false)
+  const [scanInfo, setScanInfo] = useState<{ delimiter: string; encoding: string; hasHeader: boolean; detectedColumns: number; warnings?: string[] } | null>(null)
   if (!node) return null
 
   const meta = catalogue.find((b: any) => b.type === node.data.blockType)
@@ -49,6 +60,44 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
   const isCSVBlock = ['source.csv', 'target.csv'].includes(node.data.blockType as string)
   const isCSVSource = (node.data.blockType as string) === 'source.csv'
 
+  const scanCSV = async () => {
+    if (!params.path) return
+    setScanLoading(true)
+    try {
+      const query = new URLSearchParams({ path: params.path })
+      const res = await fetch(`/api/v1/projects/${projectId}/csv-scan?${query.toString()}`)
+      const text = await res.text()
+      let data: any = null
+      try {
+        data = JSON.parse(text)
+      } catch {
+        throw new Error(text || 'Réponse invalide du serveur')
+      }
+      if (!res.ok || !data.success) {
+        throw new Error(data?.error ?? 'Erreur de scan CSV')
+      }
+      const suggested = data.scan?.suggestedParams ?? {}
+      mergeParams(nodeId, suggested, setNodes)
+      setScanInfo({
+        delimiter: data.scan?.delimiter ?? ',',
+        encoding: data.scan?.encoding ?? 'utf-8',
+        hasHeader: !!data.scan?.hasHeader,
+        detectedColumns: data.scan?.detectedColumns ?? 0,
+        warnings: data.scan?.warnings ?? [],
+      })
+    } catch (e: any) {
+      setScanInfo({
+        delimiter: params.delimiter ?? ',',
+        encoding: params.encoding ?? 'utf-8',
+        hasHeader: (params.has_header ?? 'true') !== 'false',
+        detectedColumns: 0,
+        warnings: [e?.message ?? 'Erreur de scan automatique'],
+      })
+    } finally {
+      setScanLoading(false)
+    }
+  }
+
   const runCSVPreview = async () => {
     if (!params.path) {
       setPreview({ columns: [], rows: [], error: 'Le chemin du fichier est requis pour la prévisualisation.' })
@@ -70,7 +119,13 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
         limit: '20',
       })
       const res = await fetch(`/api/v1/projects/${projectId}/csv-preview?${query.toString()}`)
-      const data = await res.json()
+      const text = await res.text()
+      let data: any = null
+      try {
+        data = JSON.parse(text)
+      } catch {
+        throw new Error(text || 'Réponse invalide du serveur')
+      }
       if (!res.ok || !data.success) {
         setPreview({ columns: [], rows: [], error: data.error ?? 'Erreur de prévisualisation' })
       } else {
@@ -82,6 +137,15 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
       setPreviewLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (isCSVSource && params.path) {
+      void scanCSV()
+    } else {
+      setScanInfo(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeId, isCSVSource, params.path])
 
   useEffect(() => {
     if (isCSVSource && params.path) {
@@ -190,19 +254,48 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
           </Field>
         ))}
 
+        {isCSVSource && scanInfo && (
+          <div className="rounded-xl border border-emerald-700/40 bg-emerald-950/20 overflow-hidden">
+            <div className="px-3 py-2 border-b border-emerald-700/30 flex items-center gap-2 text-sm text-emerald-200">
+              <Sparkles size={14} /> Détection automatique appliquée
+              {scanLoading && <span className="text-[11px] text-emerald-300/80">analyse…</span>}
+            </div>
+            <div className="p-3 text-xs text-emerald-100 space-y-1">
+              <div>Délimiteur : <strong>{scanInfo.delimiter === '\t' ? 'TAB' : scanInfo.delimiter}</strong></div>
+              <div>Encodage : <strong>{scanInfo.encoding}</strong></div>
+              <div>Colonnes détectées : <strong>{scanInfo.detectedColumns}</strong></div>
+              <div>En-tête détectée : <strong>{scanInfo.hasHeader ? 'oui' : 'non'}</strong></div>
+              {scanInfo.warnings && scanInfo.warnings.length > 0 && (
+                <div className="pt-1 text-amber-300">
+                  {scanInfo.warnings.map((w, i) => <div key={i}>• {w}</div>)}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {isCSVSource && (
           <div className="rounded-xl border border-gray-800 bg-gray-950 overflow-hidden">
             <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm text-gray-200">
                 <Eye size={14} /> Prévisualisation CSV
               </div>
-              <button
-                type="button"
-                onClick={() => void runCSVPreview()}
-                className="text-xs px-2 py-1 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-300 flex items-center gap-1"
-              >
-                <RefreshCcw size={12} className={previewLoading ? 'animate-spin' : ''} /> Actualiser
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void scanCSV()}
+                  className="text-xs px-2 py-1 rounded-md bg-emerald-900/40 hover:bg-emerald-800/50 text-emerald-200 flex items-center gap-1"
+                >
+                  <Sparkles size={12} className={scanLoading ? 'animate-spin' : ''} /> Scanner
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runCSVPreview()}
+                  className="text-xs px-2 py-1 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-300 flex items-center gap-1"
+                >
+                  <RefreshCcw size={12} className={previewLoading ? 'animate-spin' : ''} /> Actualiser
+                </button>
+              </div>
             </div>
             {preview?.error ? (
               <div className="p-3 text-xs text-red-300 bg-red-950/30">{preview.error}</div>
@@ -230,7 +323,7 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
                 </table>
               </div>
             ) : (
-              <div className="p-3 text-xs text-gray-500">Renseigne le chemin puis ajuste l'encodage, le délimiteur et les en-têtes pour voir un aperçu des 20 premières lignes.</div>
+              <div className="p-3 text-xs text-gray-500">Renseigne le chemin du fichier. Le bloc analysera automatiquement le CSV et préremplira la configuration.</div>
             )}
           </div>
         )}
@@ -346,7 +439,7 @@ function getParamFields(blockType: string): ParamField[] {
     case 'source.csv': return [
       { key: 'path', label: 'Chemin fichier', placeholder: '/data/input.csv', required: true, help: 'Chemin accessible par le backend Go sur la machine serveur.' },
       {
-        key: 'encoding', label: 'Encodage', required: true, type: 'select', help: 'Choisir l’encodage réel du fichier pour éviter les caractères illisibles.',
+        key: 'encoding', label: 'Encodage', required: true, type: 'select', help: 'Détecté automatiquement, modifiable si nécessaire.',
         options: [
           { value: 'utf-8', label: 'UTF-8' },
           { value: 'windows-1252', label: 'Windows-1252' },
@@ -356,7 +449,7 @@ function getParamFields(blockType: string): ParamField[] {
         ],
       },
       {
-        key: 'delimiter', label: 'Délimiteur', help: 'Exemples : , ; | ou tab', type: 'select',
+        key: 'delimiter', label: 'Délimiteur', help: 'Détecté automatiquement à partir des premières lignes.', type: 'select',
         options: [
           { value: ',', label: 'Virgule (,)' },
           { value: ';', label: 'Point-virgule (;)' },
@@ -365,20 +458,20 @@ function getParamFields(blockType: string): ParamField[] {
         ],
       },
       {
-        key: 'newline', label: 'Retour à la ligne', type: 'select', help: 'Auto convient dans la majorité des cas. Utiliser CR pour anciens exports Mac.',
+        key: 'newline', label: 'Retour à la ligne', type: 'select', help: 'Détecté automatiquement.',
         options: [
           { value: 'auto', label: 'Auto (LF / CRLF)' },
           { value: 'cr', label: 'CR uniquement (ancien Mac)' },
         ],
       },
       {
-        key: 'has_header', label: 'Présence d’en-tête', required: true, type: 'select', help: 'Si Non, il faut renseigner les noms de colonnes manuellement.',
+        key: 'has_header', label: 'Présence d’en-tête', required: true, type: 'select', help: 'Détectée automatiquement, mais corrigeable.',
         options: [
           { value: 'true', label: 'Oui, la première ligne contient les colonnes' },
           { value: 'false', label: 'Non, le fichier commence directement par les données' },
         ],
       },
-      { key: 'headers', label: 'Colonnes manuelles', placeholder: 'id,name,amount', help: 'Obligatoire si le fichier ne contient pas d’en-tête.' },
+      { key: 'headers', label: 'Colonnes détectées / manuelles', placeholder: 'column_1,column_2,column_3', help: 'Si aucune en-tête n’est détectée, des noms column_N sont proposés automatiquement.' },
       {
         key: 'skip_empty_lines', label: 'Ignorer lignes vides', type: 'select',
         options: [
@@ -421,20 +514,20 @@ function getParamFields(blockType: string): ParamField[] {
       {
         key: 'operator', label: 'Opérateur', required: true, type: 'select',
         options: [
-          { value: 'eq',           label: '= égal' },
-          { value: 'neq',          label: '≠ différent' },
-          { value: 'gt',           label: '> supérieur' },
-          { value: 'gte',          label: '≥ sup. ou égal' },
-          { value: 'lt',           label: '< inférieur' },
-          { value: 'lte',          label: '≤ inf. ou égal' },
-          { value: 'contains',     label: 'contient' },
+          { value: 'eq', label: '= égal' },
+          { value: 'neq', label: '≠ différent' },
+          { value: 'gt', label: '> supérieur' },
+          { value: 'gte', label: '≥ sup. ou égal' },
+          { value: 'lt', label: '< inférieur' },
+          { value: 'lte', label: '≤ inf. ou égal' },
+          { value: 'contains', label: 'contient' },
           { value: 'not_contains', label: 'ne contient pas' },
-          { value: 'starts_with',  label: 'commence par' },
-          { value: 'ends_with',    label: 'termine par' },
-          { value: 'is_null',      label: 'est null' },
-          { value: 'is_not_null',  label: 'n\'est pas null' },
-          { value: 'is_true',      label: 'est vrai (bool)' },
-          { value: 'is_false',     label: 'est faux (bool)' },
+          { value: 'starts_with', label: 'commence par' },
+          { value: 'ends_with', label: 'termine par' },
+          { value: 'is_null', label: 'est null' },
+          { value: 'is_not_null', label: 'n\'est pas null' },
+          { value: 'is_true', label: 'est vrai (bool)' },
+          { value: 'is_false', label: 'est faux (bool)' },
         ],
       },
       { key: 'value', label: 'Valeur de comparaison', placeholder: '100' },
@@ -443,7 +536,7 @@ function getParamFields(blockType: string): ParamField[] {
         options: [
           { value: 'string', label: 'Texte (string)' },
           { value: 'number', label: 'Nombre (number)' },
-          { value: 'bool',   label: 'Booléen (bool)' },
+          { value: 'bool', label: 'Booléen (bool)' },
         ],
       },
     ]
