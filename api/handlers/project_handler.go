@@ -22,9 +22,9 @@ import (
 
 // ProjectHandler gère les opérations CRUD et d'exécution sur les projets ETL.
 type ProjectHandler struct {
-	store   *store.ProjectStore
-	mgr     *manager.Manager
-	log     zerolog.Logger
+	store *store.ProjectStore
+	mgr   *manager.Manager
+	log   zerolog.Logger
 }
 
 func NewProjectHandler(s *store.ProjectStore, m *manager.Manager, log zerolog.Logger) *ProjectHandler {
@@ -99,6 +99,8 @@ func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // Run exécute un projet immédiatement avec injection des connexions résolues.
+// La réponse inclut un champ "preview" contenant les 1000 premières lignes
+// de sortie de chaque bloc (pour visualisation style Pentaho PDI).
 func (h *ProjectHandler) Run(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "projectID")
 	p, err := h.store.Load(id)
@@ -125,6 +127,7 @@ func (h *ProjectHandler) Run(w http.ResponseWriter, r *http.Request) {
 		"success":   report.Success,
 		"duration":  time.Since(start).String(),
 		"results":   report.Results,
+		"preview":   report.Preview, // N premières lignes de sortie par bloc
 	})
 }
 
