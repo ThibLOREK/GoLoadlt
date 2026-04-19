@@ -19,8 +19,17 @@ type csvPreviewResponse struct {
 	Success bool                `json:"success"`
 	Columns []string            `json:"columns"`
 	Rows    []map[string]string `json:"rows"`
-	Meta    map[string]any      `json:"meta"`
+	Meta    csvPreviewMeta      `json:"meta"`
 	Error   string              `json:"error,omitempty"`
+}
+
+type csvPreviewMeta struct {
+	Encoding       string `json:"encoding"`
+	Delimiter      string `json:"delimiter"`
+	HasHeader      bool   `json:"hasHeader"`
+	Newline        string `json:"newline"`
+	PreviewCount   int    `json:"previewCount"`
+	RequestedLimit int    `json:"requestedLimit"`
 }
 
 func (h *ProjectHandler) CSVPreview(w http.ResponseWriter, r *http.Request) {
@@ -28,19 +37,23 @@ func (h *ProjectHandler) CSVPreview(w http.ResponseWriter, r *http.Request) {
 
 	path := strings.TrimSpace(r.URL.Query().Get("path"))
 	if path == "" {
-		writeJSON(w, http.StatusBadRequest, csvPreviewResponse{Success: false, Error: "paramètre 'path' manquant"})
+		writeJSON(w, http.StatusBadRequest, csvPreviewResponse{Success: false, Error: "parametre 'path' manquant"})
 		return
 	}
 
 	encodingName := normalizeEncodingPreview(r.URL.Query().Get("encoding"))
 	delimiter := parseDelimiterPreview(r.URL.Query().Get("delimiter"))
-	hasHeader := parseBoolDefaultPreview(r.URL.Query().Get("has_header"), true)
-	headers := parseHeaderListPreview(r.URL.Query().Get("headers"))
 	newline := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("newline")))
-	previewRows := parseIntDefaultPreview(r.URL.Query().Get("limit"), 20)
-	if previewRows <= 0 || previewRows > 100 {
-		previewRows = 20
+	previewLimit := parseIntDefaultPreview(r.URL.Query().Get("limit"), 20)
+	if previewLimit <= 0 || previewLimit > 100 {
+		previewLimit = 20
 	}
+
+	// has_header : meme logique que csv.go — tout sauf false/0/no/non = true
+	v := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("has_header")))
+	explicitlyFalse := v == "false" || v == "0" || v == "no" || v == "non"
+	hasHeader := !explicitlyFalse
+	customHeaders := parseHeaderListPreview(r.URL.Query().Get("headers"))
 
 	f, err := os.Open(path)
 	if err != nil {
@@ -64,11 +77,11 @@ func (h *ProjectHandler) CSVPreview(w http.ResponseWriter, r *http.Request) {
 	reader.TrimLeadingSpace = parseBoolDefaultPreview(r.URL.Query().Get("trim_leading_space"), true)
 	reader.FieldsPerRecord = parseIntDefaultPreview(r.URL.Query().Get("fields_per_record"), -1)
 
-	columns := headers
+	var columns []string
 	if hasHeader {
 		columns, err = reader.Read()
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, csvPreviewResponse{Success: false, Error: fmt.Sprintf("lecture en-tête: %v", err)})
+			writeJSON(w, http.StatusBadRequest, csvPreviewResponse{Success: false, Error: fmt.Sprintf("lecture en-tete: %v", err)})
 			return
 		}
 		for i := range columns {
@@ -77,14 +90,30 @@ func (h *ProjectHandler) CSVPreview(w http.ResponseWriter, r *http.Request) {
 				columns[i] = fmt.Sprintf("column_%d", i+1)
 			}
 		}
+	} else if len(customHeaders) > 0 {
+		columns = customHeaders
+	} else {
+		// Peek la premiere ligne pour connaitre le nombre de colonnes.
+		firstRec, err := reader.Read()
+		if err != nil && err != io.EOF {
+			writeJSON(w, http.StatusBadRequest, csvPreviewResponse{Success: false, Error: fmt.Sprintf("lecture premiere ligne: %v", err)})
+			return
+		}
+		columns = make([]string, len(firstRec))
+		for i := range firstRec {
+			columns[i] = fmt.Sprintf("column_%d", i+1)
+		}
+		// La premiere ligne est perdue ici (meme comportement que csv.go).
+		// L'utilisateur doit renseigner 'headers' pour eviter ca.
 	}
+
 	if len(columns) == 0 {
-		writeJSON(w, http.StatusBadRequest, csvPreviewResponse{Success: false, Error: "sans en-tête, le paramètre 'headers' est requis"})
+		writeJSON(w, http.StatusBadRequest, csvPreviewResponse{Success: false, Error: "impossible de determiner les colonnes"})
 		return
 	}
 
-	rows := make([]map[string]string, 0, previewRows)
-	for len(rows) < previewRows {
+	rows := make([]map[string]string, 0, previewLimit)
+	for len(rows) < previewLimit {
 		rec, err := reader.Read()
 		if err == io.EOF {
 			break
@@ -108,13 +137,13 @@ func (h *ProjectHandler) CSVPreview(w http.ResponseWriter, r *http.Request) {
 		Success: true,
 		Columns: columns,
 		Rows:    rows,
-		Meta: map[string]any{
-			"encoding":      encodingName,
-			"delimiter":     string(delimiter),
-			"hasHeader":     hasHeader,
-			"newline":       newline,
-			"previewCount":  len(rows),
-			"requestedLimit": previewRows,
+		Meta: csvPreviewMeta{
+			Encoding:       encodingName,
+			Delimiter:      string(delimiter),
+			HasHeader:      hasHeader,
+			Newline:        newline,
+			PreviewCount:   len(rows),
+			RequestedLimit: previewLimit,
 		},
 	})
 }

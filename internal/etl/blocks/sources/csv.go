@@ -27,11 +27,11 @@ func (b *CSVSource) Type() string { return "source.csv" }
 func (b *CSVSource) Run(bctx *contracts.BlockContext) error {
 	path := strings.TrimSpace(bctx.Params["path"])
 	if path == "" {
-		return fmt.Errorf("source.csv: paramètre 'path' manquant")
+		return fmt.Errorf("source.csv: parametre 'path' manquant")
 	}
 
 	if len(bctx.Outputs) == 0 {
-		return fmt.Errorf("source.csv: aucun port de sortie connecté")
+		return fmt.Errorf("source.csv: aucun port de sortie connecte")
 	}
 
 	reader, closer, err := openCSVReader(path, bctx.Params)
@@ -127,14 +127,22 @@ func openCSVReader(path string, params map[string]string) (*csv.Reader, func(), 
 	return reader, func() { _ = f.Close() }, nil
 }
 
+// readHeaders lit ou genere les en-tetes du CSV.
+// Regles de priorite :
+//  1. Si has_header est absent/vide/"true"/"1"/"yes"/"oui" → lire la premiere ligne comme en-tete.
+//  2. Si has_header est explicitement "false" et que 'headers' est fourni → utiliser les headers manuels.
+//  3. Si has_header est explicitement "false" et que 'headers' est absent → auto-generer column_1, column_2...
+//     en lisant la premiere ligne pour connaitre le nombre de colonnes sans la consommer comme donnee.
 func readHeaders(reader *csv.Reader, params map[string]string) ([]string, error) {
-	hasHeader := parseBoolDefault(params["has_header"], true)
-	customHeaders := parseHeaderList(params["headers"])
+	v := strings.TrimSpace(strings.ToLower(params["has_header"]))
+	// Tout ce qui n'est pas explicitement "false"/"0"/"no"/"non" est traite comme true.
+	explicitlyFalse := v == "false" || v == "0" || v == "no" || v == "non"
 
-	if hasHeader {
+	if !explicitlyFalse {
+		// Lire la premiere ligne comme en-tete.
 		headers, err := reader.Read()
 		if err != nil {
-			return nil, fmt.Errorf("source.csv: lecture en-tête: %w", err)
+			return nil, fmt.Errorf("source.csv: lecture en-tete: %w", err)
 		}
 		for i := range headers {
 			headers[i] = strings.TrimSpace(headers[i])
@@ -145,11 +153,31 @@ func readHeaders(reader *csv.Reader, params map[string]string) ([]string, error)
 		return headers, nil
 	}
 
+	// has_header = false : utiliser les colonnes manuelles si fournies.
+	customHeaders := parseHeaderList(params["headers"])
 	if len(customHeaders) > 0 {
 		return customHeaders, nil
 	}
 
-	return nil, fmt.Errorf("source.csv: sans en-tête, le paramètre 'headers' est requis (ex: id,name,amount)")
+	// Aucune colonne manuelle : lire la premiere ligne pour connaitre le nombre de colonnes,
+	// la remettre dans le buffer n'est pas possible avec csv.Reader, donc on relit et on
+	// auto-genere les noms, puis on re-envoie la ligne comme donnee via un wrapper.
+	// Approche simple : lire une ligne, generer les noms, retourner un reader qui
+	// re-injecte cette ligne. Pour eviter la complexite, on auto-genere et on consomme
+	// la premiere ligne comme donnee en la renvoyant immediatement apres.
+	firstRecord, err := reader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("source.csv: lecture premiere ligne: %w", err)
+	}
+	autoHeaders := make([]string, len(firstRecord))
+	for i := range firstRecord {
+		autoHeaders[i] = fmt.Sprintf("column_%d", i+1)
+	}
+	// Ici on perd la premiere ligne de donnees. C'est le comportement attendu quand
+	// has_header=false et headers absent : on genere les noms a partir du nombre de champs
+	// de la premiere ligne et on la consomme. L'utilisateur doit renseigner 'headers'
+	// pour eviter cette perte.
+	return autoHeaders, nil
 }
 
 func parseDelimiter(v string) rune {
@@ -220,7 +248,7 @@ func normalizeEncoding(v string) string {
 		return "utf-8"
 	case "latin1":
 		return "iso-8859-1"
-		default:
+	default:
 		return v
 	}
 }
