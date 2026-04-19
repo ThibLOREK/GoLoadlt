@@ -12,8 +12,8 @@ func init() {
 }
 
 // Dummy laisse passer toutes les lignes sans aucune modification.
-// Utile pour observer et vérifier les données en transit dans un pipeline
-// (l'équivalent du bloc "Dummy" de Pentaho PDI).
+// Utile pour observer les données en transit (équivalent Pentaho PDI Dummy).
+// Tolère 0 sortie (bloc terminal d'observation sans suite dans le pipeline).
 type Dummy struct{}
 
 func (b *Dummy) Type() string { return "transform.dummy" }
@@ -22,7 +22,6 @@ func (b *Dummy) Run(bctx *contracts.BlockContext) error {
 	if len(bctx.Inputs) == 0 {
 		return fmt.Errorf("transform.dummy: aucun port d'entrée")
 	}
-	in := bctx.Inputs[0]
 
 	closeOutputs := func() {
 		for _, out := range bctx.Outputs {
@@ -30,6 +29,7 @@ func (b *Dummy) Run(bctx *contracts.BlockContext) error {
 		}
 	}
 
+	in := bctx.Inputs[0]
 	for {
 		select {
 		case <-bctx.Ctx.Done():
@@ -40,10 +40,12 @@ func (b *Dummy) Run(bctx *contracts.BlockContext) error {
 				closeOutputs()
 				return nil
 			}
+			// Propager vers toutes les sorties (0 à N sorties supportées).
 			for _, out := range bctx.Outputs {
 				select {
 				case out.Ch <- row:
 				case <-bctx.Ctx.Done():
+					closeOutputs()
 					return bctx.Ctx.Err()
 				}
 			}

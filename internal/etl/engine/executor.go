@@ -29,7 +29,7 @@ type ExecutionReport struct {
 	EndedAt   time.Time
 	Results   []RunResult
 	Success   bool
-	Preview   map[string][]contracts.DataRow `json:"preview"` // N premières lignes par bloc
+	Preview   map[string][]contracts.DataRow `json:"preview"`
 }
 
 // Executor exécute un projet ETL à partir de son DAG.
@@ -38,15 +38,21 @@ type Executor struct {
 	ActiveEnv string
 }
 
-// NewExecutor crée un Executor.
 func NewExecutor(log zerolog.Logger, activeEnv string) *Executor {
 	return &Executor{log: log, ActiveEnv: activeEnv}
 }
 
-// teeChannel intercepte chaque ligne passant dans src :
-// elle est capturée dans le PreviewStore puis ré-émise sur le canal retourné.
-// Non-bloquant : n'interrompt pas le flux même si la preview est pleine.
-func teeChannel(ctx context.Context, src chan contracts.DataRow, blockID string, ps *contracts.PreviewStore) chan contracts.DataRow {
+// teeChannel intercepte les lignes de src sans modifier le canal original.
+// Il crée un NOUVEAU canal (retourné) qui reçoit une copie de chaque ligne
+// tout en laissant src intact pour le bloc consommateur.
+// BUG CORRIGÉ : ne plus écraser p.Ch in-place — le bloc consommateur
+// doit continuer à lire depuis le canal original créé par le producteur.
+func teeChannel(
+	ctx context.Context,
+	src chan contracts.DataRow,
+	blockID string,
+	ps *contracts.PreviewStore,
+) chan contracts.DataRow {
 	tee := make(chan contracts.DataRow, cap(src))
 	go func() {
 		defer close(tee)
@@ -62,11 +68,11 @@ func teeChannel(ctx context.Context, src chan contracts.DataRow, blockID string,
 				case <-ctx.Done():
 					return
 				}
-				case <-ctx.Done():
-					return
-				}
+			case <-ctx.Done():
+				return
 			}
-		}()
+		}
+	}()
 	return tee
 }
 
@@ -78,19 +84,17 @@ func (e *Executor) Execute(ctx context.Context, project *contracts.Project) (*Ex
 		StartedAt: time.Now(),
 	}
 
-	// Construire le DAG.
 	dag, err := BuildDAG(project)
 	if err != nil {
 		return nil, fmt.Errorf("executor: %w", err)
 	}
 
-	// Tri topologique.
 	ordered, err := dag.TopologicalSort()
 	if err != nil {
 		return nil, fmt.Errorf("executor: %w", err)
 	}
 
-	// Indexer les edges désactivés pour les sauter.
+	// Index des edges désactivés.
 	disabledEdges := make(map[string]bool, len(project.Edges))
 	for _, edge := range project.Edges {
 		if edge.Disabled {
@@ -98,7 +102,9 @@ func (e *Executor) Execute(ctx context.Context, project *contracts.Project) (*Ex
 		}
 	}
 
-	// Créer les ports (canaux) entre les blocs (sauf edges désactivés).
+	// Créer les canaux entre blocs (sauf edges désactivés).
+	// ports[key] = canal brut sur lequel le producteur ÉCRIT.
+	// Le consommateur lira depuis ce même canal (via inputPorts).
 	ports := make(map[string]*contracts.Port)
 	for _, node := range ordered {
 		for _, succ := range dag.Successors(node.ID) {
@@ -114,12 +120,10 @@ func (e *Executor) Execute(ctx context.Context, project *contracts.Project) (*Ex
 		}
 	}
 
-	// Exécuter chaque bloc dans l'ordre topologique.
 	for _, node := range ordered {
 		start := time.Now()
 		result := RunResult{NodeID: node.ID}
 
-		// Récupérer la factory du bloc depuis le registre.
 		factory, ok := blocks.Registry[node.Type]
 		if !ok {
 			err := fmt.Errorf("bloc de type '%s' non enregistré", node.Type)
@@ -130,28 +134,76 @@ func (e *Executor) Execute(ctx context.Context, project *contracts.Project) (*Ex
 		}
 		block := factory()
 
-		// Assembler les ports d'entrée.
+		// --- Ports d'entrée ---
+		// Le consommateur lit depuis le canal brut (ports[key].Ch).
+		// La preview est capturée côté SORTIE du producteur, pas ici.
 		var inputPorts []*contracts.Port
-		for predID, succs := range dag.adjacency {
-			for _, succID := range succs {
+		for predID := range dag.adjacency {
+			for _, succID := range dag.adjacency[predID] {
 				if succID == node.ID {
 					key := predID + "->" + node.ID
-					if p, ok := ports[key]; ok {
+					if p, exists := ports[key]; exists {
 						inputPorts = append(inputPorts, p)
 					}
 				}
 			}
 		}
 
-		// Assembler les ports de sortie avec tee pour la preview.
+		// --- Ports de sortie avec tee preview ---
+		// CORRECTION : on crée un Port WRAPPER dont le Ch est le canal tee.
+		// Le Port original dans ports[key] reste inchangé — le bloc suivant
+		// lira toujours depuis ports[key].Ch (le canal brut du producteur).
+		// La goroutine tee lit depuis ports[key].Ch et recopie vers tee.Ch.
 		var outputPorts []*contracts.Port
 		for _, succ := range dag.Successors(node.ID) {
 			key := node.ID + "->" + succ.ID
-			if p, ok := ports[key]; ok {
-				// Wrapper le canal avec tee : chaque ligne est capturée dans preview
-				p.Ch = teeChannel(ctx, p.Ch, node.ID, preview)
-				outputPorts = append(outputPorts, p)
+			if originalPort, exists := ports[key]; exists {
+				// Le producteur écrit dans originalPort.Ch.
+				// La goroutine tee lit depuis originalPort.Ch → capture preview → recopie vers teeCh.
+				// Mais le consommateur lit aussi depuis originalPort.Ch...
+				// → On doit brancher le tee ENTRE producteur et consommateur.
+				//
+				// Architecture correcte :
+				//   producteur → rawCh → goroutine tee → teeCh → consommateur
+				//
+				// On crée rawCh (le producteur y écrira via outputPorts),
+				// tee lit rawCh et écrit dans originalPort.Ch (que le consommateur lit déjà).
+				rawCh := make(chan contracts.DataRow, defaultChannelBuffer)
+
+				// Lance la goroutine tee : rawCh → preview + originalPort.Ch
+				go func(src chan contracts.DataRow, dst chan contracts.DataRow, bID string) {
+					defer close(dst)
+					for {
+						select {
+						case row, ok := <-src:
+							if !ok {
+								return
+							}
+							preview.Append(bID, row)
+							select {
+							case dst <- row:
+							case <-ctx.Done():
+								return
+							}
+						case <-ctx.Done():
+							return
+						}
+					}
+				}(rawCh, originalPort.Ch, node.ID)
+
+				// Le producteur reçoit un Port pointant sur rawCh.
+				outputPorts = append(outputPorts, &contracts.Port{
+					ID: key,
+					Ch: rawCh,
+				})
 			}
+		}
+
+		// Les blocs terminaux (targets) n'ont pas de successeurs :
+		// on leur donne un Port de sortie factice pour la preview uniquement.
+		if len(outputPorts) == 0 && len(inputPorts) > 0 {
+			// Pas de successeur → pas de preview de sortie pour ce bloc (normal).
+			// outputPorts reste vide : le bloc target doit gérer bctx.Outputs vide.
 		}
 
 		bctx := &contracts.BlockContext{

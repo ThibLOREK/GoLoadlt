@@ -13,8 +13,7 @@ func init() {
 	blocks.Register("transform.filter_advanced", func() contracts.Block { return &FilterAdvanced{} })
 }
 
-// FilterAdvanced route les lignes vers deux sorties (true/false) selon une condition
-// composée configurable sur texte, nombre ou booléen.
+// FilterAdvanced route les lignes vers deux sorties (true/false) selon une condition.
 //
 // Paramètres :
 //   - field      : nom de la colonne à évaluer (obligatoire)
@@ -24,8 +23,8 @@ func init() {
 //   - value_type : string | number | bool (défaut: string)
 //
 // Sorties :
-//   - Outputs[0] : lignes qui satisfont la condition (branche true / IF)
-//   - Outputs[1] : lignes qui ne satisfont pas la condition (branche false / ELSE) — optionnel
+//   - Outputs[0] : lignes qui satisfont la condition (branche true)
+//   - Outputs[1] : lignes qui ne satisfont pas (branche false) — optionnel
 type FilterAdvanced struct{}
 
 func (b *FilterAdvanced) Type() string { return "transform.filter_advanced" }
@@ -44,10 +43,10 @@ func (b *FilterAdvanced) Run(bctx *contracts.BlockContext) error {
 	if field == "" || operator == "" {
 		return fmt.Errorf("transform.filter_advanced: paramètres 'field' et 'operator' obligatoires")
 	}
-
 	if len(bctx.Outputs) == 0 {
 		return fmt.Errorf("transform.filter_advanced: au moins un port de sortie requis")
 	}
+
 	trueCh := bctx.Outputs[0].Ch
 	var falseCh chan contracts.DataRow
 	if len(bctx.Outputs) > 1 {
@@ -73,21 +72,28 @@ func (b *FilterAdvanced) Run(bctx *contracts.BlockContext) error {
 			}
 			match, err := evalCondition(row, field, operator, value, valueType)
 			if err != nil {
+				// CORRECTION : fermer les sorties avant de retourner l'erreur
+				// pour éviter de bloquer les consommateurs en attente.
+				closeAll()
 				return fmt.Errorf("transform.filter_advanced: %w", err)
 			}
 			if match {
 				select {
 				case trueCh <- row:
 				case <-bctx.Ctx.Done():
+					closeAll()
 					return bctx.Ctx.Err()
 				}
 			} else if falseCh != nil {
 				select {
 				case falseCh <- row:
 				case <-bctx.Ctx.Done():
+					closeAll()
 					return bctx.Ctx.Err()
 				}
 			}
+			// Si falseCh == nil et match == false : la ligne est silencieusement
+			// droppée (comportement attendu quand la branche false n'est pas câblée).
 		}
 	}
 }
@@ -103,6 +109,7 @@ func evalCondition(row contracts.DataRow, field, operator, value, valueType stri
 	}
 
 	if !exists || raw == nil {
+		// Champ absent ou null : la condition est fausse pour tous les autres opérateurs.
 		return false, nil
 	}
 
@@ -112,7 +119,7 @@ func evalCondition(row contracts.DataRow, field, operator, value, valueType stri
 		if err != nil {
 			return false, fmt.Errorf("champ '%s' non numérique: %v", field, raw)
 		}
-		cmpNum, err := strconv.ParseFloat(value, 64)
+		cmpNum, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
 		if err != nil {
 			return false, fmt.Errorf("valeur de comparaison '%s' non numérique", value)
 		}
@@ -183,7 +190,7 @@ func toFloat(v any) (float64, error) {
 	case int64:
 		return float64(val), nil
 	case string:
-		return strconv.ParseFloat(val, 64)
+		return strconv.ParseFloat(strings.TrimSpace(val), 64)
 	default:
 		return 0, fmt.Errorf("type inconnu pour conversion numérique: %T", v)
 	}
@@ -194,7 +201,7 @@ func toBool(v any) (bool, error) {
 	case bool:
 		return val, nil
 	case string:
-		return strconv.ParseBool(val)
+		return strconv.ParseBool(strings.TrimSpace(val))
 	default:
 		f, err := toFloat(v)
 		if err != nil {

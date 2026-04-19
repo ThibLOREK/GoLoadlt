@@ -14,7 +14,7 @@ func init() {
 	blocks.Register("source.csv", func() contracts.Block { return &CSVSource{} })
 }
 
-// CSVSource lit un fichier CSV et envoie chaque ligne vers le port de sortie.
+// CSVSource lit un fichier CSV et envoie chaque ligne vers le(s) port(s) de sortie.
 type CSVSource struct{}
 
 func (b *CSVSource) Type() string { return "source.csv" }
@@ -23,6 +23,10 @@ func (b *CSVSource) Run(bctx *contracts.BlockContext) error {
 	path := bctx.Params["path"]
 	if path == "" {
 		return fmt.Errorf("source.csv: paramètre 'path' manquant")
+	}
+
+	if len(bctx.Outputs) == 0 {
+		return fmt.Errorf("source.csv: aucun port de sortie connecté")
 	}
 
 	delimiter := ','
@@ -41,7 +45,6 @@ func (b *CSVSource) Run(bctx *contracts.BlockContext) error {
 	reader.LazyQuotes = true
 	reader.TrimLeadingSpace = true
 
-	// Lire l'en-tête.
 	headers, err := reader.Read()
 	if err != nil {
 		return fmt.Errorf("source.csv: lecture en-tête: %w", err)
@@ -50,6 +53,10 @@ func (b *CSVSource) Run(bctx *contracts.BlockContext) error {
 	for {
 		select {
 		case <-bctx.Ctx.Done():
+			// Fermer les sorties avant de retourner l'annulation.
+			for _, out := range bctx.Outputs {
+				close(out.Ch)
+			}
 			return bctx.Ctx.Err()
 		default:
 		}
@@ -59,6 +66,10 @@ func (b *CSVSource) Run(bctx *contracts.BlockContext) error {
 			break
 		}
 		if err != nil {
+			// Fermer les sorties en cas d'erreur pour ne pas bloquer les consommateurs.
+			for _, out := range bctx.Outputs {
+				close(out.Ch)
+			}
 			return fmt.Errorf("source.csv: lecture ligne: %w", err)
 		}
 
@@ -69,17 +80,19 @@ func (b *CSVSource) Run(bctx *contracts.BlockContext) error {
 			}
 		}
 
-		// Envoyer la ligne à tous les ports de sortie.
 		for _, out := range bctx.Outputs {
 			select {
 			case out.Ch <- row:
 			case <-bctx.Ctx.Done():
+				for _, o := range bctx.Outputs {
+					close(o.Ch)
+				}
 				return bctx.Ctx.Err()
 			}
 		}
 	}
 
-	// Fermer tous les canaux de sortie pour signaler la fin du flux.
+	// Fin normale : fermer tous les canaux de sortie.
 	for _, out := range bctx.Outputs {
 		close(out.Ch)
 	}
