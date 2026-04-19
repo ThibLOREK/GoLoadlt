@@ -12,7 +12,6 @@ interface Props {
   setNodes: Dispatch<SetStateAction<Node[]>>
 }
 
-// Met à jour un param dans rfNodes (source de vérité ReactFlow)
 function updateParam(nodeId: string, key: string, value: string, setNodes: Dispatch<SetStateAction<Node[]>>) {
   setNodes(nds => nds.map(n => {
     if (n.id !== nodeId) return n
@@ -43,7 +42,6 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
 
   return (
     <aside className="w-80 flex-shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col overflow-y-auto">
-      {/* En-tête */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-gray-100">{node.data.label as string}</span>
@@ -54,7 +52,6 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
         </button>
       </div>
 
-      {/* Bannière de validation */}
       {validation && (
         <div className={`mx-4 mt-3 px-3 py-2 rounded-lg flex items-start gap-2 text-xs ${
           validation.valid
@@ -69,7 +66,6 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
       )}
 
       <div className="px-4 py-4 space-y-4 flex-1">
-        {/* Label */}
         <Field label="Label">
           <input
             className={inputCls()}
@@ -80,7 +76,6 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
           />
         </Field>
 
-        {/* Connexion */}
         {needsConnRef(node.data.blockType as string) && (
           <Field label="Réf. connexion (connRef)" required missing={validation?.missing.includes('connRef')}>
             <input
@@ -94,7 +89,6 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
           </Field>
         )}
 
-        {/* Params spécifiques */}
         {paramFields.map(f => (
           <Field key={f.key} label={f.label} required={f.required} missing={validation?.missing.includes(f.key)}>
             {isCSVBlock && isFilePathField(f.key) ? (
@@ -104,6 +98,17 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
                 onChange={v => updateParam(nodeId, f.key, v, setNodes)}
                 placeholder={f.placeholder}
               />
+            ) : f.type === 'select' && f.options ? (
+              <select
+                className={inputCls(validation?.missing.includes(f.key))}
+                value={params[f.key] ?? ''}
+                onChange={e => updateParam(nodeId, f.key, e.target.value, setNodes)}
+              >
+                <option value="">-- sélectionner --</option>
+                {f.options.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
             ) : f.multiline ? (
               <textarea
                 className={`${inputCls(validation?.missing.includes(f.key))} resize-none h-24`}
@@ -137,7 +142,9 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
   )
 }
 
-// Champ avec bouton Parcourir
+// FilePickerInput : champ texte libre (chemin serveur) + bouton parcourir.
+// Le bouton parcourir est indicatif ; le chemin doit être saisi manuellement
+// car le serveur Go accède au fichier via son système de fichiers local.
 function FilePickerInput({
   value, invalid, onChange, placeholder
 }: {
@@ -150,7 +157,12 @@ function FilePickerInput({
 
   const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (file) onChange(file.name)
+    if (!file) return
+    // Utilise le chemin absolu (Electron) si disponible, sinon le nom du fichier
+    // Note : en navigateur standard, seul file.name est accessible (pas le chemin complet)
+    // L'utilisateur peut corriger le chemin manuellement dans le champ texte
+    const path = (file as any).path || file.name
+    onChange(path)
   }
 
   return (
@@ -158,12 +170,12 @@ function FilePickerInput({
       <input
         className={`${inputCls(invalid)} flex-1`}
         value={value}
-        placeholder={placeholder}
+        placeholder={placeholder ?? '/data/input.csv'}
         onChange={e => onChange(e.target.value)}
       />
       <button
         type="button"
-        title="Parcourir"
+        title="Parcourir (copier le nom)"
         onClick={() => fileRef.current?.click()}
         className="flex-shrink-0 px-2 py-1.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-gray-300 transition-colors"
       >
@@ -213,7 +225,16 @@ function needsConnRef(blockType: string) {
   return ['source.postgres', 'source.mysql', 'source.mssql', 'target.postgres'].includes(blockType)
 }
 
-interface ParamField { key: string; label: string; placeholder?: string; multiline?: boolean; required?: boolean }
+interface SelectOption { value: string; label: string }
+interface ParamField {
+  key: string
+  label: string
+  placeholder?: string
+  multiline?: boolean
+  required?: boolean
+  type?: 'text' | 'select'
+  options?: SelectOption[]
+}
 
 function getParamFields(blockType: string): ParamField[] {
   switch (blockType) {
@@ -233,6 +254,38 @@ function getParamFields(blockType: string): ParamField[] {
     ]
     case 'target.postgres': return [
       { key: 'table', label: 'Table cible', placeholder: 'schema.table', required: true },
+    ]
+    case 'transform.dummy': return []
+    case 'transform.filter_advanced': return [
+      { key: 'field', label: 'Champ à évaluer', placeholder: 'amount', required: true },
+      {
+        key: 'operator', label: 'Opérateur', required: true, type: 'select',
+        options: [
+          { value: 'eq',           label: '= égal' },
+          { value: 'neq',          label: '≠ différent' },
+          { value: 'gt',           label: '> supérieur' },
+          { value: 'gte',          label: '≥ sup. ou égal' },
+          { value: 'lt',           label: '< inférieur' },
+          { value: 'lte',          label: '≤ inf. ou égal' },
+          { value: 'contains',     label: 'contient' },
+          { value: 'not_contains', label: 'ne contient pas' },
+          { value: 'starts_with',  label: 'commence par' },
+          { value: 'ends_with',    label: 'termine par' },
+          { value: 'is_null',      label: 'est null' },
+          { value: 'is_not_null',  label: 'n\'est pas null' },
+          { value: 'is_true',      label: 'est vrai (bool)' },
+          { value: 'is_false',     label: 'est faux (bool)' },
+        ],
+      },
+      { key: 'value', label: 'Valeur de comparaison', placeholder: '100' },
+      {
+        key: 'value_type', label: 'Type de valeur', type: 'select',
+        options: [
+          { value: 'string', label: 'Texte (string)' },
+          { value: 'number', label: 'Nombre (number)' },
+          { value: 'bool',   label: 'Booléen (bool)' },
+        ],
+      },
     ]
     case 'transform.filter': return [
       { key: 'condition', label: 'Condition', placeholder: 'amount > 100', required: true },

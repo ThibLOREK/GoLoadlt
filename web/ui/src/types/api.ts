@@ -20,6 +20,7 @@ export interface ETLEdge {
   to: string
   fromPort?: string
   toPort?: string
+  disabled?: boolean // flux désactivé sans suppression (clic droit sur l'edge)
 }
 
 export interface Project {
@@ -72,4 +73,5 @@ export interface RunReport {
   success: boolean
   duration: string
   results: RunResult[]
+  preview: Record<string, Record<string, any>[]> // N premières lignes par blockID
 }

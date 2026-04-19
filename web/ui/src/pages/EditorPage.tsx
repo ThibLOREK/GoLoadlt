@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ReactFlow,
@@ -9,6 +9,7 @@ import {
   useNodesState,
   useEdgesState,
   type Connection as RFConnection,
+  type Edge as RFEdge,
   type Node,
   BackgroundVariant,
 } from '@xyflow/react'
@@ -21,11 +22,17 @@ import { useNodeValidation } from '@/hooks/useNodeValidation'
 import BlockPalette from '@/components/editor/BlockPalette'
 import NodeConfigPanel from '@/components/editor/NodeConfigPanel'
 import ETLBlockNode from '@/components/editor/ETLBlockNode'
+import DataPreviewPanel from '@/components/editor/DataPreviewPanel'
 import Button from '@/components/ui/Button'
-import { Save, Play, ArrowLeft, AlertTriangle } from 'lucide-react'
+import { Save, Play, ArrowLeft, AlertTriangle, Eye } from 'lucide-react'
 import type { ETLNode, ETLEdge, Project } from '@/types/api'
 
 const nodeTypes = { etlBlock: ETLBlockNode }
+
+// Style d'un edge normal
+const EDGE_STYLE_ACTIVE   = { stroke: '#4f7bff', strokeWidth: 2 }
+// Style d'un edge désactivé (pointillé gris)
+const EDGE_STYLE_DISABLED = { stroke: '#4b5563', strokeWidth: 2, strokeDasharray: '6 3', opacity: 0.45 }
 
 function toRFNodes(etlNodes: ETLNode[]) {
   return etlNodes.map(n => ({
@@ -48,7 +55,10 @@ function toRFEdges(etlEdges: ETLEdge[]) {
     target: e.to,
     sourceHandle: e.fromPort ?? null,
     targetHandle: e.toPort ?? null,
-    style: { stroke: '#4f7bff', strokeWidth: 2 },
+    data: { disabled: e.disabled ?? false },
+    style: e.disabled ? EDGE_STYLE_DISABLED : EDGE_STYLE_ACTIVE,
+    label: e.disabled ? '🚫' : undefined,
+    labelStyle: { fill: '#6b7280', fontSize: 10 },
   }))
 }
 
@@ -64,6 +74,16 @@ function toETLNodes(rfNodes: Node[]): ETLNode[] {
   }))
 }
 
+function toETLEdges(rfEdges: RFEdge[]): ETLEdge[] {
+  return rfEdges.map(e => ({
+    from: e.source,
+    to: e.target,
+    fromPort: e.sourceHandle ?? '',
+    toPort: e.targetHandle ?? '',
+    disabled: (e.data as any)?.disabled ?? false,
+  }))
+}
+
 export default function EditorPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const navigate = useNavigate()
@@ -72,14 +92,15 @@ export default function EditorPage() {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
 
+  // Preview
+  const [preview, setPreview] = useState<Record<string, Record<string, any>[]> | null>(null)
+  const [showPreview, setShowPreview] = useState(false)
+
   // Validation globale
   const validationMap = useNodeValidation(nodes)
   const invalidCount = [...validationMap.values()].filter(v => !v.valid).length
 
-  // Sync nodes dans le store pour ETLBlockNode (qui y accède via useEditorStore)
   useEffect(() => { storeSetNodes(nodes) }, [nodes])
-
-  // Auto-save
   useAutoSave(projectId, nodes, edges)
 
   useEffect(() => {
@@ -94,7 +115,28 @@ export default function EditorPage() {
 
   const onConnect = useCallback(
     (conn: RFConnection) => {
-      setEdges(eds => addEdge({ ...conn, style: { stroke: '#4f7bff', strokeWidth: 2 } }, eds))
+      setEdges(eds => addEdge({ ...conn, style: EDGE_STYLE_ACTIVE, data: { disabled: false } }, eds))
+      markDirty()
+    },
+    [setEdges]
+  )
+
+  // Clic droit sur un edge : bascule activé / désactivé
+  const onEdgeContextMenu = useCallback(
+    (event: React.MouseEvent, edge: RFEdge) => {
+      event.preventDefault()
+      setEdges(eds =>
+        eds.map(e => {
+          if (e.id !== edge.id) return e
+          const disabled = !((e.data as any)?.disabled ?? false)
+          return {
+            ...e,
+            data: { ...e.data, disabled },
+            style: disabled ? EDGE_STYLE_DISABLED : EDGE_STYLE_ACTIVE,
+            label: disabled ? '🚫' : undefined,
+          }
+        })
+      )
       markDirty()
     },
     [setEdges]
@@ -105,7 +147,7 @@ export default function EditorPage() {
     const updated: Project = {
       ...project,
       nodes: toETLNodes(nodes),
-      edges: edges.map(e => ({ from: e.source, to: e.target, fromPort: e.sourceHandle ?? '', toPort: e.targetHandle ?? '' })),
+      edges: toETLEdges(edges),
     }
     await updateProject(projectId, updated)
     setProject(updated)
@@ -114,13 +156,17 @@ export default function EditorPage() {
 
   const handleRun = async () => {
     if (invalidCount > 0) {
-      const ok = confirm(`${invalidCount} bloc(s) ont des paramètres manquants. Exécuter quand même ?`)
+      const ok = confirm(`${invalidCount} bloc(s) ont des paramètres manquants. Exécuter quand même ?`)
       if (!ok) return
     }
     await handleSave()
     if (!projectId) return
     try {
       const report = await runProject(projectId) as any
+      if (report.preview && Object.keys(report.preview).length > 0) {
+        setPreview(report.preview)
+        setShowPreview(true)
+      }
       alert(report.success ? `✅ Succès en ${report.duration}` : `❌ Erreur d'exécution`)
     } catch (e: any) {
       alert(`❌ ${e.response?.data?.error ?? e.message}`)
@@ -148,20 +194,18 @@ export default function EditorPage() {
     <div className="flex h-screen">
       <BlockPalette />
 
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
-        <div className="flex items-center gap-2 px-4 py-2 bg-gray-900 border-b border-gray-800">
+        <div className="flex items-center gap-2 px-4 py-2 bg-gray-900 border-b border-gray-800 flex-shrink-0">
           <Button size="sm" variant="ghost" onClick={() => navigate('/projects')}>
             <ArrowLeft size={14} /> Projets
           </Button>
           <span className="text-sm font-semibold text-gray-300 ml-2">{project?.name}</span>
 
-          {/* Badge dirty */}
           {isDirty && (
             <span className="text-xs text-yellow-400 ml-1 animate-pulse">↻ sauvegarde...</span>
           )}
 
-          {/* Badge validation globale */}
           {invalidCount > 0 && (
             <span className="flex items-center gap-1 text-xs text-red-400 ml-2">
               <AlertTriangle size={12} />
@@ -172,12 +216,30 @@ export default function EditorPage() {
             <span className="text-xs text-green-400 ml-2">✓ Projet valide</span>
           )}
 
-          <div className="ml-auto flex gap-2">
+          <div className="ml-auto flex gap-2 items-center">
+            {/* Bouton aperçu (visible après un run) */}
+            {preview && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowPreview(v => !v)}
+                title="Afficher / masquer l'aperçu des données"
+              >
+                <Eye size={14} />
+                {showPreview ? 'Masquer aperçu' : 'Aperçu'}
+              </Button>
+            )}
             <Button size="sm" variant="ghost" onClick={handleSave}><Save size={14} /> Sauvegarder</Button>
             <Button size="sm" onClick={handleRun} disabled={nodes.length === 0}><Play size={14} /> Exécuter</Button>
           </div>
         </div>
 
+        {/* Tooltip d'aide pour les edges */}
+        <div className="text-center text-xs text-gray-700 py-0.5 bg-gray-900/50 border-b border-gray-800/50 select-none">
+          Clic droit sur un lien pour l’activer / désactiver
+        </div>
+
+        {/* Canvas ReactFlow */}
         <div className="flex-1" onDrop={onDrop} onDragOver={e => e.preventDefault()}>
           <ReactFlow
             nodes={nodes}
@@ -187,6 +249,7 @@ export default function EditorPage() {
             onConnect={onConnect}
             onNodeClick={(_, node) => selectNode(node.id)}
             onPaneClick={() => selectNode(null)}
+            onEdgeContextMenu={onEdgeContextMenu}
             nodeTypes={nodeTypes}
             fitView
             deleteKeyCode="Delete"
@@ -197,6 +260,15 @@ export default function EditorPage() {
             <MiniMap nodeColor="#4f7bff" maskColor="rgba(0,0,0,0.7)" style={{ background: '#0f1117' }} />
           </ReactFlow>
         </div>
+
+        {/* Panel de prévisualisation des données (style Pentaho PDI) */}
+        {showPreview && preview && (
+          <DataPreviewPanel
+            preview={preview}
+            nodes={nodes as any}
+            onClose={() => setShowPreview(false)}
+          />
+        )}
       </div>
 
       {selectedNodeId && <NodeConfigPanel nodeId={selectedNodeId} nodes={nodes} setNodes={setNodes} />}
