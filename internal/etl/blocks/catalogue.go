@@ -19,6 +19,8 @@ func Catalogue() []map[string]any {
 		meta("transform.cast", "transform", "Cast Type", "Convertit le type d'une colonne", 1, 1, 1, 1),
 		meta("transform.add_column", "transform", "Add Column", "Ajoute une colonne calculée", 1, 1, 1, 1),
 		meta("transform.join", "transform", "Join", "Joint deux flux sur une clé", 2, 2, 1, 1),
+		meta("transform.merge", "transform", "Merge", "Fusionne deux flux — parité complète pd.merge (how, on, left_on, right_on, suffixes, validate)", 2, 2, 1, 1),
+		meta("transform.groupby", "transform", "GroupBy", "Agrège un flux par groupe — parité complète df.groupby (by, sort, as_index, dropna, SUM/COUNT/AVG/MIN/MAX/MEDIAN/NUNIQUE/STD/VAR)", 1, 1, 1, 1),
 		meta("transform.split", "transform", "Split", "Sépare un flux en plusieurs sorties", 1, 1, 2, 10),
 		meta("transform.aggregate", "transform", "Aggregate", "Agrège des lignes par groupe", 1, 1, 1, 1),
 		meta("transform.sort", "transform", "Sort", "Trie un flux", 1, 1, 1, 1),
