@@ -10,6 +10,7 @@ func Catalogue() []map[string]any {
 		meta("source.postgres", "input", "PostgreSQL Input", "Exécute une requête SQL sur PostgreSQL", 0, 0, 1, 1),
 		meta("source.mysql", "input", "MySQL Input", "Exécute une requête SQL sur MySQL", 0, 0, 1, 1),
 		meta("source.mssql", "input", "MSSQL Input", "Exécute une requête SQL sur SQL Server", 0, 0, 1, 1),
+		meta("source.data_grid", "input", "Data Grid", "Table statique définie en dur dans le pipeline — parité complète Pentaho PDI Data Grid (columns + rows JSON)", 0, 0, 1, 1),
 
 		// --- Transforms ---
 		meta("transform.dummy", "transform", "Dummy", "Laisse passer les données sans modification — utile pour observer le flux (like Pentaho PDI Dummy)", 1, 1, 1, 1),
