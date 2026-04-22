@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Node, Dispatch, SetStateAction } from 'react'
 import { useEditorStore } from '@/store/editorStore'
 import { useNodeValidation } from '@/hooks/useNodeValidation'
-import { X, Trash2, AlertTriangle, CheckCircle2, FolderOpen, RefreshCcw, Eye, Sparkles } from 'lucide-react'
+import { X, Trash2, AlertTriangle, CheckCircle2, FolderOpen, RefreshCcw, Eye, Sparkles, Plus, Minus } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Badge from '@/components/ui/Badge'
 
@@ -28,6 +28,242 @@ function mergeParams(nodeId: string, patch: Record<string, string>, setNodes: Di
     return { ...n, data: { ...n.data, params } }
   }))
 }
+
+// ─── Types pour Data Grid ────────────────────────────────────────────────────
+
+const DATA_TYPES = ['string', 'int', 'float', 'bool', 'date', 'datetime'] as const
+type DataType = typeof DATA_TYPES[number]
+
+interface GridColumn {
+  name: string
+  type: DataType
+}
+
+interface GridState {
+  columns: GridColumn[]
+  rows: string[][]
+}
+
+function parseGridParams(params: Record<string, string>): GridState {
+  let columns: GridColumn[] = []
+  let rows: string[][] = []
+  try {
+    const names = params.columns ? params.columns.split(',').map(s => s.trim()).filter(Boolean) : []
+    const types = params.types ? params.types.split(',').map(s => s.trim()) : []
+    columns = names.map((name, i) => ({ name, type: (types[i] as DataType) ?? 'string' }))
+  } catch { columns = [] }
+  try {
+    rows = params.rows ? JSON.parse(params.rows) : []
+    if (!Array.isArray(rows)) rows = []
+  } catch { rows = [] }
+  return { columns, rows }
+}
+
+function serializeGrid(grid: GridState): Record<string, string> {
+  return {
+    columns: grid.columns.map(c => c.name).join(','),
+    types: grid.columns.map(c => c.type).join(','),
+    rows: JSON.stringify(grid.rows),
+  }
+}
+
+// ─── Composant éditeur de grille ─────────────────────────────────────────────
+
+function DataGridEditor({
+  params,
+  onChange,
+}: {
+  params: Record<string, string>
+  onChange: (patch: Record<string, string>) => void
+}) {
+  const [grid, setGrid] = useState<GridState>(() => parseGridParams(params))
+
+  // Sync vers params à chaque changement
+  useEffect(() => {
+    onChange(serializeGrid(grid))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grid])
+
+  const updateGrid = (next: GridState) => setGrid(next)
+
+  // Ajouter une colonne
+  const addColumn = () => {
+    const next: GridState = {
+      columns: [...grid.columns, { name: `col_${grid.columns.length + 1}`, type: 'string' }],
+      rows: grid.rows.map(r => [...r, '']),
+    }
+    updateGrid(next)
+  }
+
+  // Supprimer la dernière colonne
+  const removeColumn = (colIdx: number) => {
+    if (grid.columns.length <= 1) return
+    const next: GridState = {
+      columns: grid.columns.filter((_, i) => i !== colIdx),
+      rows: grid.rows.map(r => r.filter((_, i) => i !== colIdx)),
+    }
+    updateGrid(next)
+  }
+
+  // Renommer une colonne
+  const renameColumn = (colIdx: number, name: string) => {
+    const columns = grid.columns.map((c, i) => i === colIdx ? { ...c, name } : c)
+    updateGrid({ ...grid, columns })
+  }
+
+  // Changer le type d'une colonne
+  const changeType = (colIdx: number, type: DataType) => {
+    const columns = grid.columns.map((c, i) => i === colIdx ? { ...c, type } : c)
+    updateGrid({ ...grid, columns })
+  }
+
+  // Ajouter une ligne
+  const addRow = () => {
+    const next: GridState = {
+      ...grid,
+      rows: [...grid.rows, Array(grid.columns.length).fill('')],
+    }
+    updateGrid(next)
+  }
+
+  // Supprimer une ligne
+  const removeRow = (rowIdx: number) => {
+    updateGrid({ ...grid, rows: grid.rows.filter((_, i) => i !== rowIdx) })
+  }
+
+  // Modifier une cellule
+  const setCell = (rowIdx: number, colIdx: number, value: string) => {
+    const rows = grid.rows.map((r, ri) =>
+      ri === rowIdx ? r.map((c, ci) => ci === colIdx ? value : c) : r
+    )
+    updateGrid({ ...grid, rows })
+  }
+
+  const cellCls = 'bg-gray-800 border border-gray-700 px-2 py-1 text-xs text-gray-100 focus:outline-none focus:ring-1 focus:ring-brand-500 w-full min-w-[80px]'
+  const headerCellCls = 'bg-gray-900 border border-gray-700 px-1 py-1 text-xs text-gray-100 focus:outline-none focus:ring-1 focus:ring-brand-500 w-full min-w-[80px] font-semibold'
+
+  return (
+    <div className="rounded-xl border border-gray-700 bg-gray-950 overflow-hidden">
+      {/* Header */}
+      <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between bg-gray-900">
+        <span className="text-xs font-semibold text-gray-300">Éditeur de données</span>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={addColumn}
+            className="flex items-center gap-1 text-[11px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200 transition-colors"
+            title="Ajouter une colonne"
+          >
+            <Plus size={11} /> Colonne
+          </button>
+          <button
+            type="button"
+            onClick={addRow}
+            className="flex items-center gap-1 text-[11px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200 transition-colors"
+            title="Ajouter une ligne"
+          >
+            <Plus size={11} /> Ligne
+          </button>
+        </div>
+      </div>
+
+      {grid.columns.length === 0 ? (
+        <div className="p-4 text-xs text-gray-500 text-center">
+          Aucune colonne — clique sur <strong>+ Colonne</strong> pour commencer
+        </div>
+      ) : (
+        <div className="overflow-auto max-h-96">
+          <table className="border-collapse text-xs w-full">
+            <thead className="sticky top-0 z-10 bg-gray-900">
+              {/* Ligne 1 : noms des colonnes */}
+              <tr>
+                <th className="w-6 border border-gray-700 bg-gray-900" />
+                {grid.columns.map((col, ci) => (
+                  <th key={ci} className="border border-gray-700 bg-gray-900 p-0 min-w-[90px]">
+                    <div className="flex items-center gap-0.5 px-1">
+                      <input
+                        className={headerCellCls}
+                        value={col.name}
+                        onChange={e => renameColumn(ci, e.target.value)}
+                        placeholder={`col_${ci + 1}`}
+                        title="Nom de la colonne"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeColumn(ci)}
+                        className="flex-shrink-0 text-gray-600 hover:text-red-400 transition-colors p-0.5"
+                        title="Supprimer cette colonne"
+                      >
+                        <Minus size={11} />
+                      </button>
+                    </div>
+                  </th>
+                ))}
+              </tr>
+              {/* Ligne 2 : types des colonnes */}
+              <tr>
+                <th className="w-6 border border-gray-700 bg-gray-800 text-[10px] text-gray-500 px-1">type</th>
+                {grid.columns.map((col, ci) => (
+                  <th key={ci} className="border border-gray-700 bg-gray-800 p-0">
+                    <select
+                      className="w-full bg-gray-800 text-[11px] text-brand-400 px-1 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500 border-0 cursor-pointer"
+                      value={col.type}
+                      onChange={e => changeType(ci, e.target.value as DataType)}
+                    >
+                      {DATA_TYPES.map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {grid.rows.length === 0 ? (
+                <tr>
+                  <td colSpan={grid.columns.length + 1} className="text-center text-gray-600 py-3 text-xs border border-gray-800">
+                    Aucune ligne — clique sur <strong>+ Ligne</strong>
+                  </td>
+                </tr>
+              ) : grid.rows.map((row, ri) => (
+                <tr key={ri} className="odd:bg-gray-950 even:bg-gray-900/40 group">
+                  {/* Numéro de ligne + suppression */}
+                  <td className="border border-gray-800 text-center text-[10px] text-gray-600 w-6 px-1 group-hover:text-red-400">
+                    <button
+                      type="button"
+                      onClick={() => removeRow(ri)}
+                      className="w-full text-center hover:text-red-400 transition-colors"
+                      title="Supprimer cette ligne"
+                    >
+                      {ri + 1}
+                    </button>
+                  </td>
+                  {row.map((cell, ci) => (
+                    <td key={ci} className="border border-gray-800 p-0">
+                      <input
+                        className={cellCls}
+                        value={cell}
+                        onChange={e => setCell(ri, ci, e.target.value)}
+                        placeholder=""
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Footer stats */}
+      <div className="px-3 py-1.5 border-t border-gray-800 bg-gray-900 text-[10px] text-gray-600">
+        {grid.columns.length} colonne{grid.columns.length !== 1 ? 's' : ''} · {grid.rows.length} ligne{grid.rows.length !== 1 ? 's' : ''}
+      </div>
+    </div>
+  )
+}
+
+// ─── Panel principal ──────────────────────────────────────────────────────────
 
 export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
   const { catalogue, selectNode } = useEditorStore()
@@ -59,6 +295,7 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
   const isFilePathField = (key: string) => key === 'path'
   const isCSVBlock = ['source.csv', 'target.csv'].includes(node.data.blockType as string)
   const isCSVSource = (node.data.blockType as string) === 'source.csv'
+  const isDataGrid = (node.data.blockType as string) === 'source.data_grid'
 
   const scanCSV = async () => {
     if (!params.path) return
@@ -216,7 +453,16 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
           </Field>
         )}
 
-        {paramFields.map(f => (
+        {/* ── Éditeur Data Grid ── */}
+        {isDataGrid && (
+          <DataGridEditor
+            params={params}
+            onChange={patch => mergeParams(nodeId, patch, setNodes)}
+          />
+        )}
+
+        {/* ── Champs génériques (non data_grid) ── */}
+        {!isDataGrid && paramFields.map(f => (
           <Field key={f.key} label={f.label} required={f.required} missing={validation?.missing.includes(f.key)} help={f.help}>
             {isCSVBlock && isFilePathField(f.key) ? (
               <FilePickerInput
@@ -465,13 +711,13 @@ function getParamFields(blockType: string): ParamField[] {
         ],
       },
       {
-        key: 'has_header', label: 'Présence d’en-tête', required: true, type: 'select', help: 'Détectée automatiquement, mais corrigeable.',
+        key: 'has_header', label: 'Présence d\u2019en-tête', required: true, type: 'select', help: 'Détectée automatiquement, mais corrigeable.',
         options: [
           { value: 'true', label: 'Oui, la première ligne contient les colonnes' },
           { value: 'false', label: 'Non, le fichier commence directement par les données' },
         ],
       },
-      { key: 'headers', label: 'Colonnes détectées / manuelles', placeholder: 'column_1,column_2,column_3', help: 'Si aucune en-tête n’est détectée, des noms column_N sont proposés automatiquement.' },
+      { key: 'headers', label: 'Colonnes détectées / manuelles', placeholder: 'column_1,column_2,column_3', help: 'Si aucune en-tête n\u2019est détectée, des noms column_N sont proposés automatiquement.' },
       {
         key: 'skip_empty_lines', label: 'Ignorer lignes vides', type: 'select',
         options: [
@@ -487,7 +733,7 @@ function getParamFields(blockType: string): ParamField[] {
         ],
       },
       {
-        key: 'lazy_quotes', label: 'Tolérance guillemets imparfaits', type: 'select', help: 'Pratique pour des CSV sales issus d’exports métiers.',
+        key: 'lazy_quotes', label: 'Tolérance guillemets imparfaits', type: 'select', help: 'Pratique pour des CSV sales issus d\u2019exports métiers.',
         options: [
           { value: 'true', label: 'Oui' },
           { value: 'false', label: 'Non' },
@@ -584,6 +830,7 @@ function getParamFields(blockType: string): ParamField[] {
       { key: 'keyName', label: 'Nom clé', placeholder: 'mois', required: true },
       { key: 'valueName', label: 'Nom valeur', placeholder: 'montant', required: true },
     ]
+    case 'source.data_grid': return []
     default: return []
   }
 }
