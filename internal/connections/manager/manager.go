@@ -1,13 +1,14 @@
 package manager
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 
-	"github.com/rinjold/go-etl-studio/internal/connections"
+	"github.com/ThibLOREK/GoLoadlt/internal/connections"
 )
 
 // Manager gère le CRUD des connexions et le switch d'environnement global.
@@ -17,6 +18,9 @@ type Manager struct {
 	connections map[string]*connections.Connection
 	ActiveEnv   string // "dev" | "preprod" | "prod"
 }
+
+// envStateFile est le nom du fichier de persistance de l'environnement actif.
+const envStateFile = ".env-state.json"
 
 // New crée un Manager et charge les connexions existantes depuis le répertoire.
 func New(connsDir string, activeEnv string) (*Manager, error) {
@@ -28,7 +32,12 @@ func New(connsDir string, activeEnv string) (*Manager, error) {
 		connections: make(map[string]*connections.Connection),
 		ActiveEnv:   activeEnv,
 	}
-	return m, m.loadAll()
+	if err := m.loadAll(); err != nil {
+		return nil, err
+	}
+	// Restaure l'env actif persisté sur disque (survit aux redémarrages)
+	m.loadEnvState()
+	return m, nil
 }
 
 // loadAll charge tous les fichiers XML du répertoire de connexions.
@@ -49,6 +58,7 @@ func (m *Manager) loadAll() error {
 		if err := xml.Unmarshal(data, &conn); err != nil {
 			return fmt.Errorf("manager: parse connexion '%s': %w", e.Name(), err)
 		}
+		// Hydrate la map Envs depuis EnvList (XML → mémoire)
 		conn.Envs = make(map[string]connections.ConnEnv, len(conn.EnvList))
 		for _, env := range conn.EnvList {
 			conn.Envs[env.Name] = env
@@ -84,6 +94,7 @@ func (m *Manager) List() []*connections.Connection {
 func (m *Manager) Save(conn *connections.Connection) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// Aplatit la map Envs vers EnvList pour la sérialisation XML
 	conn.EnvList = make([]connections.ConnEnv, 0, len(conn.Envs))
 	for _, env := range conn.Envs {
 		conn.EnvList = append(conn.EnvList, env)
@@ -108,9 +119,45 @@ func (m *Manager) Delete(id string) error {
 	return os.Remove(filepath.Join(m.connsDir, id+".xml"))
 }
 
-// SwitchEnv bascule l'environnement actif globalement.
-func (m *Manager) SwitchEnv(env string) {
+// SwitchEnv bascule l'environnement actif globalement et persiste le choix sur disque.
+// Retourne une erreur si la persistance échoue.
+// Audit Phase 6 : correction du bug — l'env était perdu au redémarrage.
+func (m *Manager) SwitchEnv(env string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ActiveEnv = env
+	return m.persistEnvState()
+}
+
+// persistEnvState écrit l'env actif dans .env-state.json dans le répertoire des connexions.
+// Appelé par SwitchEnv() — protégé par le mutex de SwitchEnv.
+func (m *Manager) persistEnvState() error {
+	type state struct {
+		ActiveEnv string `json:"activeEnv"`
+	}
+	data, err := json.Marshal(state{ActiveEnv: m.ActiveEnv})
+	if err != nil {
+		return fmt.Errorf("manager: marshal env state: %w", err)
+	}
+	path := filepath.Join(m.connsDir, envStateFile)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("manager: écriture env state: %w", err)
+	}
+	return nil
+}
+
+// loadEnvState restaure l'env actif depuis .env-state.json si présent.
+// Appelé dans New() après loadAll() — aucun verrou requis (initialisation).
+func (m *Manager) loadEnvState() {
+	type state struct {
+		ActiveEnv string `json:"activeEnv"`
+	}
+	data, err := os.ReadFile(filepath.Join(m.connsDir, envStateFile))
+	if err != nil {
+		return // fichier absent = première exécution, on garde la valeur par défaut
+	}
+	var s state
+	if json.Unmarshal(data, &s) == nil && s.ActiveEnv != "" {
+		m.ActiveEnv = s.ActiveEnv
+	}
 }
