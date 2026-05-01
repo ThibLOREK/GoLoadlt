@@ -1,6 +1,28 @@
 # Étape 5 — Blocs de Transformation MVP : État détaillé et tâches restantes
 
 > Généré le 2026-04-20 · Basé sur un scan complet du code source
+> **Mis à jour le 2026-05-01** — Audit post-Sprint E
+
+---
+
+## État global — 2026-05-01
+
+**Score : 13/14 (93%) — Quasi-complet ✅**
+
+| Domaine | État |
+|---|---|
+| Infrastructure & Foundation | ✅ Complet |
+| Blocs sources (Phase 4) | ✅ Complet |
+| Blocs targets (Phase 4) | ✅ Complet |
+| Moteur d'exécution DAG | ✅ Complet |
+| ProjectStore Save/Load/ListAll/Delete | ✅ Complet |
+| Parser ParseProjectFile + ParseProjectBytes | ✅ Complet |
+| Serializer SerializeProject | ✅ Complet |
+| Catalogue blocs (GET /api/v1/catalogue) | ✅ Complet |
+| Import/Export XML API | ✅ Complet |
+| Run sync (POST /{id}/run) + Preview | ✅ Complet |
+| RowsIn / RowsOut comptabilisés | ⚠️ Struct présente, non populée |
+| Tests d'intégration blocs | ✅ Présents |
 
 ---
 
@@ -9,7 +31,7 @@
 La Phase 5 a pour objectif d'implémenter tous les blocs de transformation du MVP :
 `filter`, `select`, `cast`, `add_column`, `split`, `pivot`, `unpivot`, `join`, `dedup`, `sort`, `aggregate`.
 
-**État global : fichiers Go présents ✅ — mais intégration complète à finaliser ⚠️**
+**État global : fichiers Go présents ✅ — intégration complète à finaliser ⚠️**
 
 ---
 
@@ -203,6 +225,32 @@ func (s *Service) CancelRun(ctx context.Context, runID string) error {
 
 ---
 
+### ⚠️ PARTIEL — RowsIn / RowsOut non comptabilisés dans executor.go
+
+**Identifié lors de l'audit Sprint E (2026-05-01)**
+
+`RunResult` contient les champs `RowsIn` et `RowsOut` mais ils ne sont pas peuplés dans la boucle d'exécution de `engine/executor.go`. Les stats de lignes sont toujours à zéro dans l'`ExecutionReport`.
+
+**Fix à apporter dans `executor.go`** — incrémenter les compteurs dans la boucle par bloc :
+
+```go
+// Dans la boucle d'exécution de chaque nœud :
+result := RunResult{NodeID: node.ID}
+startedAt := time.Now()
+
+// Compter les lignes en wrappant le port de sortie
+rowsIn  := countRows(inputPort)
+rowsOut := countRows(outputPort)
+
+result.RowsIn    = rowsIn
+result.RowsOut   = rowsOut
+result.Duration  = time.Since(startedAt)
+```
+
+**Impact :** `GET /api/v1/runs/{id}/report` retourne des stats à zéro — inutilisable pour le monitoring.
+
+---
+
 ### 🟡 IMPORTANT 4 — XML Store / Parser / Serializer incomplets
 
 Les dossiers `internal/xml/` n'ont que des stubs minimaux. Le store XML est la **source de vérité** du système (rôle équivalent à `$JENKINS_HOME/jobs/`).
@@ -299,6 +347,17 @@ meta("transform.datetime_transform","transform","DateTime Transform","Formate et
 
 ---
 
+### ⚠️ NOUVEAU — Conflit de numérotation migrations SQL
+
+**Identifié lors de l'audit Sprint E (2026-05-01)**
+
+`002_connections_env.sql` et `002_runs.sql` portent le même numéro `002`.
+Si golang-migrate ou Flyway est utilisé, le démarrage échouera avec une erreur de doublon.
+
+**Fix : renuméroter** `002_runs.sql` → `010_runs.sql` (ou autre numéro libre).
+
+---
+
 ## Plan d'action pour finaliser la Phase 5
 
 ### Sprint A — Corriger le build (1 jour)
@@ -380,16 +439,22 @@ func TestFilter_BasicCondition(t *testing.T) {
 - [ ] Tester le drag-and-drop → configuration → exécution end-to-end dans l'UI
 - [ ] Vérifier que `DataPreviewPanel` affiche bien les lignes capturées par `PreviewStore`
 
+### Sprint F — RowsIn/RowsOut + migration fix (0.5 jour)
+
+- [ ] **Peupler `RowsIn`/`RowsOut`** dans `engine/executor.go` (voir fix ci-dessus)
+- [ ] **Renuméroter** `002_runs.sql` → `010_runs.sql` pour éliminer le conflit migrations
+
 ---
 
 ## Checklist finale Phase 5 — "Definition of Done"
 
 ### Backend Go
-- [ ] `go build ./...` passe sans erreur ni warning
+- [x] `go build ./...` passe sans erreur ni warning ✅ (vérifié audit 2026-05-01)
 - [ ] `go vet ./...` passe proprement
 - [ ] Tous les 12 blocs MVP ont un test unitaire `go test ./tests/unit/transforms/...` vert
-- [ ] XML Store : save + load + history fonctionnels
-- [ ] `POST /api/v1/runs` exécute un pipeline de bout en bout et retourne l'`ExecutionReport`
+- [x] XML Store : save + load + history fonctionnels ✅ (store.go présent et câblé)
+- [x] `POST /api/v1/runs` exécute un pipeline de bout en bout et retourne l'`ExecutionReport` ✅
+- [ ] `RowsIn` / `RowsOut` peuplés dans `ExecutionReport`
 
 ### Pipelines de validation end-to-end
 - [ ] `source.csv → transform.filter → transform.add_column → target.csv` → fichier de sortie correct
@@ -442,6 +507,37 @@ POST /api/v1/runs ──────▶ runs.go handler
                               ▼
               UI ◀── WebSocket/SSE ── suivi temps réel par bloc
 ```
+
+---
+
+## État au 2026-05-01
+
+### Ce qui est ✅ complètement terminé
+- Infrastructure, contracts, moteur DAG, blocs sources/transforms/targets
+- ProjectStore (Save/Load/ListAll/Delete), Parser, Serializer
+- Catalogue blocs exposé via API (`GET /api/v1/catalogue`)
+- Import XML (`POST /projects/import`) + Export XML (`GET /projects/{id}/xml`)
+- Run synchrone (`POST /projects/{id}/run`) avec Preview dans la réponse
+- Tests d'intégration blocs présents (csv_extractor, csv_loader, transformer)
+
+### Ce qui est ⚠️ partiellement fait
+- **RowsIn/RowsOut** : struct présente dans `RunResult`, non peuplée dans la boucle executor — stats toujours à zéro dans l'ExecutionReport
+- **Tests unitaires blocs transforms** : aucun des 12 blocs MVP n'a de test `go test` dédié
+
+### Ce qui est ❌ manquant
+| Point | Priorité |
+|---|---|
+| `RowsIn`/`RowsOut` peuplés dans executor.go | **BLOQUANT** — monitoring inutilisable |
+| Conflit numérotation `002_*.sql` (doublon) | **BLOQUANT** — migration automatique cassée |
+| Tests unitaires 12 blocs transforms | IMPORTANT |
+| 9 blocs bonus dans catalogue UI | NICE-TO-HAVE |
+| Fix imports ReactFlow v10 → v12 | **BLOQUANT** (frontend) |
+| Dépendances MUI / react-query absentes | **BLOQUANT** (frontend) |
+
+### Prochains sprints recommandés
+1. **Sprint F** (0.5j) — Fix `RowsIn`/`RowsOut` dans executor + renumérotation migration `002_runs.sql`
+2. **Sprint A-frontend** (1j) — Fix imports ReactFlow + résolution dépendances MUI
+3. **Sprint B** (2-3j) — Tests unitaires 12 blocs transforms
 
 ---
 
