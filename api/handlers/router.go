@@ -17,6 +17,8 @@ func NewRouter(
 	log zerolog.Logger,
 	projectStore *store.ProjectStore,
 	connManager *manager.Manager,
+	// runHandler est optionnel (nil tant que Sprint C n'a pas injecté jobRepo)
+	runHandler *RunHandler,
 ) *chi.Mux {
 	r := chi.NewRouter()
 
@@ -42,10 +44,16 @@ func NewRouter(
 		pr.Get("/{projectID}", ph.Get)
 		pr.Put("/{projectID}", ph.Update)
 		pr.Delete("/{projectID}", ph.Delete)
-		pr.Post("/{projectID}/run", ph.Run)
+		pr.Post("/{projectID}/run", ph.Run)   // existant — exécution synchrone directe
 		pr.Get("/{projectID}/xml", ph.ExportXML)
 		pr.Get("/{projectID}/csv-preview", ph.CSVPreview)
 		pr.Get("/{projectID}/csv-scan", ph.CSVScan)
+
+		// Phase 7 — Runs via orchestrateur
+		if runHandler != nil {
+			pr.Post("/{projectID}/runs", runHandler.StartRun)
+			pr.Get("/{projectID}/runs", runHandler.ListRuns)
+		}
 	})
 
 	r.Get("/api/v1/catalogue", ph.Catalogue)
@@ -62,6 +70,16 @@ func NewRouter(
 
 	r.Get("/api/v1/environment", ch.GetEnv)
 	r.Put("/api/v1/environment", ch.SwitchEnv)
+
+	// Phase 7 — Routes runs standalone
+	if runHandler != nil {
+		r.Route("/api/v1/runs", func(rr chi.Router) {
+			rr.Get("/{runID}", runHandler.GetRun)
+			rr.Delete("/{runID}", runHandler.CancelRun)
+			rr.Get("/{runID}/logs", runHandler.GetLogs)
+			rr.Get("/{runID}/report", runHandler.GetReport)
+		})
+	}
 
 	return r
 }
