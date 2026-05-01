@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/ThibLOREK/GoLoadlt/internal/connections"
+	"github.com/rinjold/go-etl-studio/internal/connections"
 )
 
 // Manager gère le CRUD des connexions et le switch d'environnement global.
@@ -120,8 +120,6 @@ func (m *Manager) Delete(id string) error {
 }
 
 // SwitchEnv bascule l'environnement actif globalement et persiste le choix sur disque.
-// Retourne une erreur si la persistance échoue.
-// Audit Phase 6 : correction du bug — l'env était perdu au redémarrage.
 func (m *Manager) SwitchEnv(env string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -130,7 +128,6 @@ func (m *Manager) SwitchEnv(env string) error {
 }
 
 // persistEnvState écrit l'env actif dans .env-state.json dans le répertoire des connexions.
-// Appelé par SwitchEnv() — protégé par le mutex de SwitchEnv.
 func (m *Manager) persistEnvState() error {
 	type state struct {
 		ActiveEnv string `json:"activeEnv"`
@@ -147,7 +144,6 @@ func (m *Manager) persistEnvState() error {
 }
 
 // loadEnvState restaure l'env actif depuis .env-state.json si présent.
-// Appelé dans New() après loadAll() — aucun verrou requis (initialisation).
 func (m *Manager) loadEnvState() {
 	type state struct {
 		ActiveEnv string `json:"activeEnv"`

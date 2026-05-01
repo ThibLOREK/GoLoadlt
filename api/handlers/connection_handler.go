@@ -11,11 +11,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	_ "github.com/jackc/pgx/v5/stdlib" // enregistre le driver "pgx" pour database/sql
 	"github.com/rs/zerolog"
 
-	"github.com/ThibLOREK/GoLoadlt/internal/connections"
-	"github.com/ThibLOREK/GoLoadlt/internal/connections/manager"
-	"github.com/ThibLOREK/GoLoadlt/internal/connections/resolver"
+	"github.com/rinjold/go-etl-studio/internal/connections"
+	"github.com/rinjold/go-etl-studio/internal/connections/manager"
+	"github.com/rinjold/go-etl-studio/internal/connections/resolver"
 )
 
 // validEnvs liste les valeurs d'environnement acceptées.
@@ -86,7 +87,6 @@ func (h *ConnectionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // Test vérifie qu'une connexion est réellement atteignable sur l'environnement actif.
-// Audit Phase 6 BLOQUANT 1 : le handler précédent répondait toujours "ok" sans ping réel.
 func (h *ConnectionHandler) Test(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "connID")
 	rc, err := resolver.Resolve(h.mgr, id)
@@ -117,56 +117,56 @@ func (h *ConnectionHandler) Test(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// pingConnection ouvre et ferme une connexion DB pour vérifier l'accessibilité réelle.
+// pingConnection tente une vraie connexion à la cible selon le type.
+// - postgres : driver pgx/stdlib enregistré, sql.Open + PingContext.
+// - mysql/mssql : drivers absents du module — erreur explicite cohérente avec les stubs sources.
+// - rest : HTTP GET minimal avec le contexte fourni.
 func pingConnection(ctx context.Context, rc *resolver.ResolvedConn) error {
 	switch rc.Type {
 	case "postgres":
 		db, err := sql.Open("pgx", rc.DSN)
 		if err != nil {
-			return err
+			return fmt.Errorf("postgres: ouverture driver: %w", err)
 		}
 		defer db.Close()
-		return db.PingContext(ctx)
+		if err := db.PingContext(ctx); err != nil {
+			return fmt.Errorf("postgres: ping: %w", err)
+		}
+		return nil
+
 	case "mysql":
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", rc.User, rc.Password, rc.Host, rc.Port, rc.Database)
-		db, err := sql.Open("mysql", dsn)
-		if err != nil {
-			return err
-		}
-		defer db.Close()
-		return db.PingContext(ctx)
+		// go-sql-driver/mysql n'est pas dans le module — comportement explicite.
+		return fmt.Errorf("mysql: driver non disponible dans ce build (ajoutez github.com/go-sql-driver/mysql)")
+
 	case "mssql":
-		u := &url.URL{
-			Scheme:   "sqlserver",
-			User:     url.UserPassword(rc.User, rc.Password),
-			Host:     fmt.Sprintf("%s:%d", rc.Host, rc.Port),
-			RawQuery: url.Values{"database": {rc.Database}}.Encode(),
-		}
-		db, err := sql.Open("sqlserver", u.String())
-		if err != nil {
-			return err
-		}
-		defer db.Close()
-		return db.PingContext(ctx)
+		// microsoft/go-mssqldb n'est pas dans le module — comportement explicite.
+		return fmt.Errorf("mssql: driver non disponible dans ce build (ajoutez github.com/microsoft/go-mssqldb)")
+
 	case "rest":
+		if rc.Host == "" {
+			return fmt.Errorf("rest: URL de base (host) manquante")
+		}
+		u, err := url.ParseRequestURI(rc.Host)
+		if err != nil || u.Scheme == "" {
+			return fmt.Errorf("rest: URL invalide: %q", rc.Host)
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rc.Host, nil)
 		if err != nil {
-			return err
+			return fmt.Errorf("rest: construction requête: %w", err)
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return err
+			return fmt.Errorf("rest: requête: %w", err)
 		}
 		resp.Body.Close()
 		return nil
+
 	default:
-		return fmt.Errorf("type de connexion inconnu : %s", rc.Type)
+		return fmt.Errorf("type de connexion non supporté: %q", rc.Type)
 	}
 }
 
 // SwitchEnv bascule l'environnement actif globalement.
-// Audit Phase 6 BLOQUANT 2 : l'erreur de persistance est maintenant propagée.
-// Audit Phase 6 IMPORTANT 5 : validation whitelist dev|preprod|prod.
 func (h *ConnectionHandler) SwitchEnv(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Env string `json:"env"`
