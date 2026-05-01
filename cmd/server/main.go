@@ -8,14 +8,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"github.com/rinjold/go-etl-studio/api/handlers"
 	"github.com/rinjold/go-etl-studio/internal/connections/manager"
+	"github.com/rinjold/go-etl-studio/internal/etl/engine"
+	"github.com/rinjold/go-etl-studio/internal/orchestrator"
 	"github.com/rinjold/go-etl-studio/internal/xml/store"
 
 	// Enregistrement de tous les blocs via leurs init()
@@ -44,52 +43,17 @@ func main() {
 		log.Fatal().Err(err).Msg("impossible de charger les connexions")
 	}
 
-	// Router Chi.
-	r := chi.NewRouter()
-	r.Use(chimiddleware.Logger)
-	r.Use(chimiddleware.Recoverer)
-	r.Use(chimiddleware.RequestID)
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{"http://localhost:3000", "http://localhost:5173"},
-		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"Accept", "Content-Type"},
-	}))
+	// Instancier l'Executor et l'Orchestrateur.
+	// jobRepo est nil jusqu'à Sprint C (implémentation PostgreSQL + migration 005).
+	// L'orchestrateur gère gracieusement un jobRepo nil en ne persistant pas les statuts.
+	exec := engine.NewExecutor(log.Logger, activeEnv)
+	orch := orchestrator.NewService(exec, projectStore.XMLStore(), nil)
 
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
-	})
+	// RunHandler : jobRepo nil — GetLogs et GetReport retourneront 501 jusqu'à Sprint C.
+	rh := handlers.NewRunHandler(orch, nil, log.Logger)
 
-	// Handlers.
-	ph := handlers.NewProjectHandler(projectStore, connManager, log.Logger)
-	ch := handlers.NewConnectionHandler(connManager, log.Logger)
-
-	r.Route("/api/v1", func(r chi.Router) {
-		// Projets.
-		r.Get("/projects", ph.List)
-		r.Post("/projects", ph.Create)
-		r.Get("/projects/{projectID}", ph.Get)
-		r.Put("/projects/{projectID}", ph.Update)
-		r.Delete("/projects/{projectID}", ph.Delete)
-		r.Post("/projects/{projectID}/run", ph.Run)
-		r.Get("/projects/{projectID}/xml", ph.ExportXML)
-		r.Post("/projects/import", ph.ImportXML)
-
-		// Catalogue de blocs (pour l'UI).
-		r.Get("/catalogue", ph.Catalogue)
-
-		// Connexions.
-		r.Get("/connections", ch.List)
-		r.Post("/connections", ch.Create)
-		r.Get("/connections/{connID}", ch.Get)
-		r.Put("/connections/{connID}", ch.Update)
-		r.Delete("/connections/{connID}", ch.Delete)
-		r.Post("/connections/{connID}/test", ch.Test)
-
-		// Switch d'environnement global.
-		r.Put("/environment", ch.SwitchEnv)
-		r.Get("/environment", ch.GetEnv)
-	})
+	// Construire le routeur via NewRouter (remplace le routeur inline précédent).
+	r := handlers.NewRouter(log.Logger, projectStore, connManager, rh)
 
 	srv := &http.Server{Addr: addr, Handler: r}
 
