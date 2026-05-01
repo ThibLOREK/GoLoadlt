@@ -510,54 +510,55 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
       params.has_header, params.headers, params.lazy_quotes, params.trim_leading_space, params.fields_per_record])
 
   return (
-    <aside className="w-[26rem] flex-shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col overflow-y-auto">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 sticky top-0 bg-gray-900 z-10">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-gray-100">{node.data.label as string}</span>
-          {meta && <Badge category={(meta as any).category} />}
+    <aside className="w-[26rem] flex-shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-semibold text-gray-100 truncate">{(meta as any)?.label ?? node.data.blockType as string}</span>
+          {validation && (
+            validation.valid
+              ? <CheckCircle2 size={14} className="text-green-500 flex-shrink-0" />
+              : <AlertTriangle size={14} className="text-yellow-500 flex-shrink-0" />
+          )}
         </div>
-        <button onClick={() => selectNode(null)} className="text-gray-500 hover:text-gray-200">
+        <button
+          onClick={() => selectNode(null)}
+          className="text-gray-500 hover:text-gray-200 transition-colors flex-shrink-0"
+          aria-label="Fermer le panneau"
+        >
           <X size={16} />
         </button>
       </div>
 
-      {validation && (
-        <div className={`mx-4 mt-3 px-3 py-2 rounded-lg flex items-start gap-2 text-xs ${
-          validation.valid
-            ? 'bg-green-900/30 border border-green-700 text-green-300'
-            : 'bg-red-900/30 border border-red-700 text-red-300'
-        }`}>
-          {validation.valid
-            ? <><CheckCircle2 size={13} className="mt-0.5 flex-shrink-0" /> Bloc correctement configuré</>
-            : <><AlertTriangle size={13} className="mt-0.5 flex-shrink-0" /> Champs manquants : <strong className="ml-1">{validation.missing.join(', ')}</strong></>}
-        </div>
-      )}
-
-      <div className="px-4 py-4 space-y-4 flex-1">
-        <Field label="Label">
-          <input
-            className={inputCls()}
-            value={node.data.label as string}
-            onChange={e => setNodes(nds => nds.map(n =>
-              n.id === nodeId ? { ...n, data: { ...n.data, label: e.target.value } } : n
-            ))}
-          />
-        </Field>
-
-        {needsConnRef(node.data.blockType as string) && (
-          <Field label="Réf. connexion (connRef)" required missing={validation?.missing.includes('connRef')}>
-            <input
-              className={inputCls(validation?.missing.includes('connRef'))}
-              value={node.data.connRef as string}
-              placeholder="ex: conn-crm-prod"
-              onChange={e => setNodes(nds => nds.map(n =>
-                n.id === nodeId ? { ...n, data: { ...n.data, connRef: e.target.value } } : n
+      {/* Corps */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {validation && !validation.valid && (
+          <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg px-3 py-2">
+            <div className="flex items-center gap-1.5 text-yellow-400 text-xs font-medium mb-1">
+              <AlertTriangle size={12} /> Configuration incomplète
+            </div>
+            <ul className="space-y-0.5">
+              {validation.errors.map((err: string, i: number) => (
+                <li key={i} className="text-xs text-yellow-300/80">• {err}</li>
               ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Connexion DB pour les blocs SQL */}
+        {needsConnRef(node.data.blockType as string) && (
+          <Field label="Connexion" required>
+            <input
+              className={inputCls(!params.connRef)}
+              value={params.connRef ?? ''}
+              placeholder="my-postgres-conn"
+              onChange={e => updateParam(nodeId, 'connRef', e.target.value, setNodes)}
             />
+            <p className="mt-1 text-[11px] text-gray-500">Nom de la connexion déclarée dans le projet.</p>
           </Field>
         )}
 
-        {/* ── Data Grid ── */}
+        {/* Data Grid editor */}
         {isDataGrid && (
           <DataGridEditor
             params={params}
@@ -565,147 +566,164 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
           />
         )}
 
-        {/* ── Blocs avec paramSchema du catalogue (ex: dedup) ── */}
-        {!isDataGrid && hasParamSchema && paramSchema.map((def: any) => (
-          <Field key={def.name} label={def.label} required={def.required} help={def.description}>
-            {def.type === 'column-multiselect' ? (
+        {/* Champs via paramSchema (ex: transform.dedup) */}
+        {hasParamSchema && paramSchema.map((field: any) => (
+          <Field key={field.name} label={field.label} required={field.required}
+            missing={field.required && !params[field.name]}
+            help={field.description}>
+            {field.type === 'column-multiselect' ? (
               <ColumnMultiSelect
                 nodeId={nodeId}
                 params={params}
                 setNodes={setNodes}
-                description={def.description}
+                description={field.description}
               />
-            ) : def.type === 'column-select' ? (
+            ) : field.type === 'column-select' ? (
               <ColumnSingleSelect
                 nodeId={nodeId}
-                paramKey={def.name}
+                paramKey={field.name}
                 params={params}
                 setNodes={setNodes}
               />
-            ) : def.type === 'select' ? (
+            ) : field.type === 'select' ? (
               <select
                 className={inputCls()}
-                value={params[def.name] ?? def.default ?? ''}
-                onChange={e => updateParam(nodeId, def.name, e.target.value, setNodes)}
+                value={params[field.name] ?? field.default ?? ''}
+                onChange={e => updateParam(nodeId, field.name, e.target.value, setNodes)}
               >
                 <option value="">-- sélectionner --</option>
-                {(def.options ?? []).map((opt: string) => (
+                {(field.options ?? []).map((opt: string) => (
                   <option key={opt} value={opt}>{opt}</option>
                 ))}
               </select>
             ) : (
               <input
-                className={inputCls()}
-                value={params[def.name] ?? def.default ?? ''}
-                placeholder={def.default ?? ''}
-                onChange={e => updateParam(nodeId, def.name, e.target.value, setNodes)}
+                className={inputCls(field.required && !params[field.name])}
+                value={params[field.name] ?? ''}
+                placeholder={field.placeholder ?? ''}
+                onChange={e => updateParam(nodeId, field.name, e.target.value, setNodes)}
               />
             )}
           </Field>
         ))}
 
-        {/* ── Champs génériques (blocs sans paramSchema) ── */}
-        {!isDataGrid && !hasParamSchema && paramFields.map(f => (
-          <Field key={f.key} label={f.label} required={f.required} missing={validation?.missing.includes(f.key)} help={f.help}>
-            {isCSVBlock && isFilePathField(f.key) ? (
+        {/* Champs statiques via getParamFields */}
+        {!hasParamSchema && paramFields.map(field => (
+          <Field key={field.key} label={field.label} required={field.required}
+            missing={field.required && !params[field.key]}
+            help={field.help}>
+            {isFilePathField(field.key) && isCSVBlock ? (
               <FilePickerInput
-                value={params[f.key] ?? ''}
-                invalid={!!validation?.missing.includes(f.key)}
-                onChange={v => updateParam(nodeId, f.key, v, setNodes)}
-                placeholder={f.placeholder}
+                value={params[field.key] ?? ''}
+                invalid={!!field.required && !params[field.key]}
+                onChange={v => updateParam(nodeId, field.key, v, setNodes)}
+                placeholder={field.placeholder}
               />
-            ) : f.type === 'select' && f.options ? (
+            ) : field.type === 'select' ? (
               <select
-                className={inputCls(validation?.missing.includes(f.key))}
-                value={params[f.key] ?? ''}
-                onChange={e => updateParam(nodeId, f.key, e.target.value, setNodes)}
+                className={inputCls()}
+                value={params[field.key] ?? ''}
+                onChange={e => updateParam(nodeId, field.key, e.target.value, setNodes)}
               >
-                <option value="">-- sélectionner --</option>
-                {f.options.map(opt => (
+                {(field.options ?? []).map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
-            ) : f.multiline ? (
+            ) : field.multiline ? (
               <textarea
-                className={`${inputCls(validation?.missing.includes(f.key))} resize-none h-24`}
-                value={params[f.key] ?? ''}
-                placeholder={f.placeholder}
-                onChange={e => updateParam(nodeId, f.key, e.target.value, setNodes)}
+                className={`${inputCls(!!field.required && !params[field.key])} min-h-[80px] resize-y font-mono text-xs`}
+                value={params[field.key] ?? ''}
+                placeholder={field.placeholder}
+                onChange={e => updateParam(nodeId, field.key, e.target.value, setNodes)}
               />
             ) : (
               <input
-                className={inputCls(validation?.missing.includes(f.key))}
-                value={params[f.key] ?? ''}
-                placeholder={f.placeholder}
-                onChange={e => updateParam(nodeId, f.key, e.target.value, setNodes)}
+                className={inputCls(!!field.required && !params[field.key])}
+                value={params[field.key] ?? ''}
+                placeholder={field.placeholder}
+                onChange={e => updateParam(nodeId, field.key, e.target.value, setNodes)}
               />
             )}
           </Field>
         ))}
 
-        {/* ── Scan / Preview CSV ── */}
-        {isCSVSource && scanInfo && (
-          <div className="rounded-xl border border-emerald-700/40 bg-emerald-950/20 overflow-hidden">
-            <div className="px-3 py-2 border-b border-emerald-700/30 flex items-center gap-2 text-sm text-emerald-200">
-              <Sparkles size={14} /> Détection automatique appliquée
-              {scanLoading && <span className="text-[11px] text-emerald-300/80">analyse…</span>}
-            </div>
-            <div className="p-3 text-xs text-emerald-100 space-y-1">
-              <div>Délimiteur : <strong>{scanInfo.delimiter === '\t' ? 'TAB' : scanInfo.delimiter}</strong></div>
-              <div>Encodage : <strong>{scanInfo.encoding}</strong></div>
-              <div>Colonnes détectées : <strong>{scanInfo.detectedColumns}</strong></div>
-              <div>En-tête détectée : <strong>{scanInfo.hasHeader ? 'oui' : 'non'}</strong></div>
-              {scanInfo.warnings && scanInfo.warnings.length > 0 && (
-                <div className="pt-1 text-amber-300">
-                  {scanInfo.warnings.map((w, i) => <div key={i}>• {w}</div>)}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
+        {/* Scan CSV automatique pour source.csv */}
         {isCSVSource && (
-          <div className="rounded-xl border border-gray-800 bg-gray-950 overflow-hidden">
-            <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm text-gray-200">
-                <Eye size={14} /> Prévisualisation CSV
-              </div>
-              <div className="flex items-center gap-2">
-                <button type="button" onClick={() => void scanCSV()}
-                  className="text-xs px-2 py-1 rounded-md bg-emerald-900/40 hover:bg-emerald-800/50 text-emerald-200 flex items-center gap-1">
-                  <Sparkles size={12} className={scanLoading ? 'animate-spin' : ''} /> Scanner
-                </button>
-                <button type="button" onClick={() => void runCSVPreview()}
-                  className="text-xs px-2 py-1 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-300 flex items-center gap-1">
-                  <RefreshCcw size={12} className={previewLoading ? 'animate-spin' : ''} /> Actualiser
-                </button>
-              </div>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void scanCSV()}
+                disabled={!params.path || scanLoading}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed border border-gray-600 rounded-lg text-gray-200 transition-colors"
+              >
+                {scanLoading
+                  ? <RefreshCcw size={13} className="animate-spin" />
+                  : <Sparkles size={13} />}
+                Analyser automatiquement
+              </button>
+              <button
+                type="button"
+                onClick={() => void runCSVPreview()}
+                disabled={!params.path || previewLoading}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed border border-gray-600 rounded-lg text-gray-200 transition-colors"
+              >
+                {previewLoading
+                  ? <RefreshCcw size={13} className="animate-spin" />
+                  : <Eye size={13} />}
+                Prévisualiser
+              </button>
             </div>
-            {preview?.error ? (
-              <div className="p-3 text-xs text-red-300 bg-red-950/30">{preview.error}</div>
-            ) : previewLoading ? (
-              <div className="p-3 text-xs text-gray-400">Chargement de la prévisualisation…</div>
-            ) : preview && preview.columns.length > 0 ? (
-              <div className="overflow-auto max-h-80">
-                <table className="min-w-full text-xs">
-                  <thead className="sticky top-0 bg-gray-900 z-10">
-                    <tr>
-                      {preview.columns.map(col => (
-                        <th key={col} className="px-3 py-2 text-left text-gray-300 border-b border-gray-800 whitespace-nowrap">{col}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {preview.rows.map((row, idx) => (
-                      <tr key={idx} className="odd:bg-gray-950 even:bg-gray-900/50">
+
+            {scanInfo && (
+              <div className="bg-gray-800/60 border border-gray-700 rounded-lg px-3 py-2 text-xs space-y-1">
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-gray-300">
+                  <span>Délimiteur : <code className="text-brand-400">{scanInfo.delimiter === '\t' ? 'TAB' : scanInfo.delimiter}</code></span>
+                  <span>Encodage : <code className="text-brand-400">{scanInfo.encoding}</code></span>
+                  <span>En-tête : <code className="text-brand-400">{scanInfo.hasHeader ? 'oui' : 'non'}</code></span>
+                  <span>Colonnes : <code className="text-brand-400">{scanInfo.detectedColumns}</code></span>
+                </div>
+                {scanInfo.warnings && scanInfo.warnings.length > 0 && (
+                  <div className="mt-1 space-y-0.5">
+                    {scanInfo.warnings.map((w, i) => (
+                      <div key={i} className="flex items-center gap-1 text-yellow-400">
+                        <AlertTriangle size={10} /> {w}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {preview ? (
+              preview.error ? (
+                <div className="bg-red-900/20 border border-red-700/40 rounded-lg px-3 py-2 text-xs text-red-300">
+                  <AlertTriangle size={12} className="inline mr-1" />{preview.error}
+                </div>
+              ) : preview.columns.length > 0 ? (
+                <div className="rounded-lg border border-gray-700 overflow-auto max-h-56">
+                  <table className="text-xs w-full">
+                    <thead className="sticky top-0 bg-gray-800">
+                      <tr>
                         {preview.columns.map(col => (
-                          <td key={col} className="px-3 py-2 border-b border-gray-800 text-gray-200 whitespace-nowrap">{String(row[col] ?? '')}</td>
+                          <th key={col} className="px-3 py-2 text-left font-medium text-gray-300 whitespace-nowrap border-b border-gray-700">{col}</th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {preview.rows.map((row, idx) => (
+                        <tr key={idx} className="odd:bg-gray-950 even:bg-gray-900/50">
+                          {preview.columns.map(col => (
+                            <td key={col} className="px-3 py-2 border-b border-gray-800 text-gray-200 whitespace-nowrap">{String(row[col] ?? '')}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-3 text-xs text-gray-500">Renseigne le chemin du fichier pour lancer l'analyse automatique.</div>
+              )
             ) : (
               <div className="p-3 text-xs text-gray-500">Renseigne le chemin du fichier pour lancer l'analyse automatique.</div>
             )}
@@ -889,12 +907,12 @@ function getParamFields(blockType: string): ParamField[] {
       { key: 'field', label: 'Champ à évaluer', placeholder: 'amount', required: true },
       { key: 'operator', label: 'Opérateur', required: true, type: 'select',
         options: [
-          { value: 'eq', label: '= égal' }, { value: 'neq', label: '≠ différent' },
-          { value: 'gt', label: '> supérieur' }, { value: 'gte', label: '≥ sup. ou égal' },
-          { value: 'lt', label: '< inférieur' }, { value: 'lte', label: '≤ inf. ou égal' },
+          { value: 'eq', label: '= égal' }, { value: 'neq', label: '\u2260 différent' },
+          { value: 'gt', label: '> supérieur' }, { value: 'gte', label: '\u2265 sup. ou égal' },
+          { value: 'lt', label: '< inférieur' }, { value: 'lte', label: '\u2264 inf. ou égal' },
           { value: 'contains', label: 'contient' }, { value: 'not_contains', label: 'ne contient pas' },
           { value: 'starts_with', label: 'commence par' }, { value: 'ends_with', label: 'termine par' },
-          { value: 'is_null', label: 'est null' }, { value: 'is_not_null', label: 'n\'est pas null' },
+          { value: 'is_null', label: 'est null' }, { value: 'is_not_null', label: "n'est pas null" },
           { value: 'is_true', label: 'est vrai (bool)' }, { value: 'is_false', label: 'est faux (bool)' },
         ] },
       { key: 'value', label: 'Valeur de comparaison', placeholder: '100' },
@@ -945,6 +963,93 @@ function getParamFields(blockType: string): ParamField[] {
       { key: 'columns', label: 'Colonnes à dépivoter', placeholder: 'jan, fev, mar', required: true },
       { key: 'keyName', label: 'Nom clé', placeholder: 'mois', required: true },
       { key: 'valueName', label: 'Nom valeur', placeholder: 'montant', required: true },
+    ]
+    // ─── Blocs bonus Sprint E ────────────────────────────────────────────────
+    case 'transform.regex': return [
+      { key: 'column', label: 'Colonne source', placeholder: 'email', required: true },
+      { key: 'pattern', label: 'Expression régulière', placeholder: '([\\w.]+)@', required: true },
+      { key: 'mode', label: 'Mode', type: 'select', help: 'extract: capture le 1er groupe | replace: remplace | match: filtre les lignes',
+        options: [
+          { value: 'extract', label: 'extract — capture le 1er groupe capturant' },
+          { value: 'replace', label: 'replace — remplace les occurrences' },
+          { value: 'match', label: 'match — ne garde que les lignes qui matchent' },
+        ] },
+      { key: 'replace', label: 'Valeur de remplacement', placeholder: 'REDACTED', help: 'Uniquement pour le mode replace.' },
+      { key: 'output', label: 'Colonne de sortie', placeholder: 'email_extracted', help: 'Mode extract uniquement. Défaut : colonne + "_extracted".' },
+    ]
+    case 'transform.find_replace': return [
+      { key: 'column', label: 'Colonne', placeholder: 'status', required: true },
+      { key: 'find', label: 'Valeur à chercher', placeholder: 'N/A', required: true },
+      { key: 'replace', label: 'Valeur de remplacement', placeholder: '' },
+      { key: 'mode', label: 'Mode de correspondance', type: 'select',
+        options: [
+          { value: 'exact', label: 'exact — égalité stricte' },
+          { value: 'contains', label: 'contains — sous-chaîne' },
+          { value: 'regex', label: 'regex — expression régulière' },
+        ] },
+    ]
+    case 'transform.sampling': return [
+      { key: 'mode', label: 'Mode', type: 'select', required: true,
+        options: [
+          { value: 'first', label: 'first — N premières lignes' },
+          { value: 'percent', label: 'percent — % aléatoire' },
+          { value: 'every', label: 'every — 1 ligne sur N' },
+        ] },
+      { key: 'value', label: 'Valeur (N ou %)', placeholder: '100', required: true, help: 'Ex: 100 pour les 100 premières, 10.5 pour 10.5%, 5 pour 1 ligne sur 5.' },
+    ]
+    case 'transform.text_to_columns': return [
+      { key: 'column', label: 'Colonne à découper', placeholder: 'full_name', required: true },
+      { key: 'delimiter', label: 'Délimiteur', placeholder: ',', help: 'Défaut : virgule.' },
+      { key: 'prefix', label: 'Préfixe colonnes générées', placeholder: 'part_', help: 'Défaut : nom_colonne + "_".' },
+      { key: 'maxSplit', label: 'Nb max de colonnes', placeholder: '0', help: '0 = illimité.' },
+    ]
+    case 'transform.auto_field': return [
+      // Aucun paramètre — détection automatique sur toutes les colonnes
+    ]
+    case 'transform.append_fields': return [
+      // Pas de paramètre utilisateur — les colonnes en conflit sont préfixées 'right_' automatiquement
+    ]
+    case 'transform.data_cleansing': return [
+      { key: 'columns', label: 'Colonnes ciblées', placeholder: 'name, email', help: 'Laisser vide pour appliquer à toutes les colonnes.' },
+      { key: 'trim', label: 'Supprimer espaces début/fin', type: 'select',
+        options: [{ value: 'true', label: 'Oui' }, { value: 'false', label: 'Non' }] },
+      { key: 'toLower', label: 'Mettre en minuscules', type: 'select',
+        options: [{ value: 'true', label: 'Oui' }, { value: 'false', label: 'Non' }] },
+      { key: 'toUpper', label: 'Mettre en majuscules', type: 'select',
+        options: [{ value: 'true', label: 'Oui' }, { value: 'false', label: 'Non' }] },
+      { key: 'removeSpecial', label: 'Supprimer caractères spéciaux', type: 'select',
+        options: [{ value: 'true', label: 'Oui' }, { value: 'false', label: 'Non' }] },
+      { key: 'nullifyEmpty', label: 'Nullifier les chaînes vides', type: 'select',
+        options: [{ value: 'true', label: 'Oui' }, { value: 'false', label: 'Non' }] },
+    ]
+    case 'transform.datetime': return [
+      { key: 'column', label: 'Colonne date/heure', placeholder: 'created_at', required: true },
+      { key: 'mode', label: 'Mode', type: 'select', required: true,
+        options: [
+          { value: 'parse', label: 'parse / format — reformater la date' },
+          { value: 'add', label: 'add — ajouter une durée' },
+          { value: 'extract', label: 'extract — extraire une composante' },
+        ] },
+      { key: 'inputFormat', label: 'Format d\u2019entrée Go', placeholder: '2006-01-02', help: 'Format Go (référence : 2006-01-02 15:04:05). Défaut : 2006-01-02.' },
+      { key: 'outputFormat', label: 'Format de sortie Go', placeholder: '2006-01-02T15:04:05', help: 'Pour les modes parse et add.' },
+      { key: 'addUnit', label: 'Unité à ajouter', type: 'select', help: 'Mode add uniquement.',
+        options: [
+          { value: 'days', label: 'Jours' },
+          { value: 'hours', label: 'Heures' },
+          { value: 'minutes', label: 'Minutes' },
+        ] },
+      { key: 'addValue', label: 'Valeur à ajouter', placeholder: '7', help: 'Nombre entier ou décimal. Mode add uniquement.' },
+      { key: 'extract', label: 'Composante à extraire', type: 'select', help: 'Mode extract uniquement.',
+        options: [
+          { value: 'year', label: 'Année' },
+          { value: 'month', label: 'Mois (numéro)' },
+          { value: 'day', label: 'Jour du mois' },
+          { value: 'weekday', label: 'Jour de la semaine (texte)' },
+          { value: 'hour', label: 'Heure' },
+          { value: 'minute', label: 'Minute' },
+          { value: 'second', label: 'Seconde' },
+        ] },
+      { key: 'output', label: 'Colonne de sortie', placeholder: 'created_year', help: 'Défaut : remplace la colonne source.' },
     ]
     // transform.dedup n'est plus ici — géré via paramSchema du catalogue
     case 'transform.dummy':

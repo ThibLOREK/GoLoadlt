@@ -4,13 +4,13 @@ import "sort"
 
 // ParamDef décrit un paramètre d'un bloc pour l'UI.
 type ParamDef struct {
-	Name        string `json:"name"`
-	Label       string `json:"label"`
-	Type        string `json:"type"`        // text | select | column-select | column-multiselect | checkbox
-	Default     string `json:"default,omitempty"`
-	Required    bool   `json:"required,omitempty"`
+	Name        string   `json:"name"`
+	Label       string   `json:"label"`
+	Type        string   `json:"type"`        // text | select | column-select | column-multiselect | checkbox
+	Default     string   `json:"default,omitempty"`
+	Required    bool     `json:"required,omitempty"`
 	Options     []string `json:"options,omitempty"` // pour type=select
-	Description string `json:"description,omitempty"`
+	Description string   `json:"description,omitempty"`
 	// Pour column-select et column-multiselect, le frontend peuple
 	// les options depuis les colonnes du port d'entrée du bloc.
 }
@@ -56,6 +56,17 @@ func Catalogue() []map[string]any {
 		),
 		meta("transform.pivot", "transform", "Pivot", "Pivote des lignes en colonnes", 1, 1, 1, 1, nil),
 		meta("transform.unpivot", "transform", "Unpivot", "Transforme des colonnes en lignes", 1, 1, 1, 1, nil),
+
+		// --- Blocs bonus Sprint E ---
+		meta("transform.union", "transform", "Union", "Fusionne deux flux ou plus en un seul (UNION ALL)", 2, 10, 1, 1, nil),
+		meta("transform.regex", "transform", "Regex Extract", "Extrait des groupes via une regex sur une colonne (modes: extract, replace, match)", 1, 1, 1, 1, nil),
+		meta("transform.find_replace", "transform", "Find & Replace", "Remplace des valeurs dans une colonne (modes: exact, contains, regex)", 1, 1, 1, 1, nil),
+		meta("transform.sampling", "transform", "Sampling", "Échantillonne le flux : N premières lignes, % aléatoire, ou 1 ligne sur N", 1, 1, 1, 1, nil),
+		meta("transform.text_to_columns", "transform", "Text to Columns", "Découpe une colonne texte en plusieurs colonnes via un délimiteur", 1, 1, 1, 1, nil),
+		meta("transform.auto_field", "transform", "Auto Field", "Détecte et convertit automatiquement les types de colonnes (int, float, bool, string)", 1, 1, 1, 1, nil),
+		meta("transform.append_fields", "transform", "Append Fields", "Fusionne horizontalement deux flux ligne par ligne (colonnes en conflit préfixées 'right_')", 2, 2, 1, 1, nil),
+		meta("transform.data_cleansing", "transform", "Data Cleansing", "Nettoie les données : trim, casse, suppression caractères spéciaux, nullification des vides", 1, 1, 1, 1, nil),
+		meta("transform.datetime", "transform", "DateTime Transform", "Parse, formate, ajoute une durée ou extrait une composante d'une colonne date/heure", 1, 1, 1, 1, nil),
 
 		// --- Targets ---
 		meta("target.csv", "output", "CSV Output", "Écrit le flux dans un fichier CSV", 1, 1, 0, 0, nil),
