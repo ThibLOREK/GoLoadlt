@@ -36,6 +36,12 @@ func NewRouter(
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	// OpenAPI — sans authentification pour un accès direct depuis le navigateur.
+	oah := NewOpenAPIHandler()
+	r.Get("/api/docs", oah.SwaggerUI)
+	r.Get("/api/docs/*", oah.SwaggerUI)
+	r.Get("/api/v1/openapi.yaml", oah.ServeSpec)
+
 	ph := NewProjectHandler(projectStore, connManager, log)
 	r.Route("/api/v1/projects", func(pr chi.Router) {
 		pr.Get("/", ph.List)
