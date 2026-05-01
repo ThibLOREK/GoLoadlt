@@ -9,7 +9,6 @@ import (
 	"github.com/rinjold/go-etl-studio/internal/etl/contracts"
 	"github.com/rinjold/go-etl-studio/internal/etl/engine"
 	"github.com/rinjold/go-etl-studio/internal/etl/transformers"
-	"github.com/rs/zerolog"
 )
 
 func TestPipeline_CSV_Transform_CSV(t *testing.T) {
@@ -43,21 +42,31 @@ func TestPipeline_CSV_Transform_CSV(t *testing.T) {
 		Columns: []string{"first_name", "age", "statut"},
 	})
 
-	ex := engine.Executor{
+	ex := engine.Engine{
 		Extractor:   extractor,
 		Transformer: transformer,
 		Loader:      loader,
-		Log:         zerolog.Nop(),
 	}
 
-	result := ex.Execute(context.Background())
-	if result.Err != nil {
-		t.Fatalf("pipeline failed: %v", result.Err)
-	}
-	if result.RecordsRead != 2 {
-		t.Errorf("expected 2 records after filter, got %d", result.RecordsRead)
+	if err := ex.Run(context.Background()); err != nil {
+		t.Fatalf("pipeline failed: %v", err)
 	}
 
-	content, _ := os.ReadFile(dstFile.Name())
+	content, err := os.ReadFile(dstFile.Name())
+	if err != nil {
+		t.Fatalf("cannot read output csv: %v", err)
+	}
 	t.Logf("output CSV:\n%s", string(content))
+
+	// Compter les lignes de données (hors header) = 2 (Alice + Carla)
+	lines := 0
+	for _, b := range content {
+		if b == '\n' {
+			lines++
+		}
+	}
+	// header + 2 data lines = 3 newlines
+	if lines != 3 {
+		t.Errorf("expected 3 newlines (header + 2 data rows), got %d", lines)
+	}
 }
