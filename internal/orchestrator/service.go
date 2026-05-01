@@ -12,13 +12,14 @@ import (
 // Service orchestre l'exécution des projets ETL.
 // Il fait le lien entre l'API HTTP, le store XML et le moteur d'exécution DAG.
 type Service struct {
-	executor *engine.Executor
-	xmlStore *store.XMLStore
-	jobRepo  jobs.Repository
+	executor  *engine.Executor
+	xmlStore  *store.ProjectStore
+	jobRepo   jobs.Repository
 }
 
 // NewService crée un nouveau Service d'orchestration.
-func NewService(executor *engine.Executor, xmlStore *store.XMLStore, jobRepo jobs.Repository) *Service {
+// jobRepo peut être nil jusqu'à Sprint C (implémentation PostgreSQL).
+func NewService(executor *engine.Executor, xmlStore *store.ProjectStore, jobRepo jobs.Repository) *Service {
 	return &Service{
 		executor: executor,
 		xmlStore: xmlStore,
@@ -27,7 +28,8 @@ func NewService(executor *engine.Executor, xmlStore *store.XMLStore, jobRepo job
 }
 
 // RunProject charge le projet XML, parse le DAG et l'exécute.
-// Crée un Run en base, le passe à "running", exécute, puis persiste le statut final.
+// Si jobRepo est disponible : crée un Run en base, le passe à "running",
+// exécute, puis persiste le statut final.
 func (s *Service) RunProject(ctx context.Context, projectID string) (*engine.ExecutionReport, error) {
 	// 1. Charger le projet depuis le store XML
 	project, err := s.xmlStore.Load(projectID)
@@ -35,39 +37,41 @@ func (s *Service) RunProject(ctx context.Context, projectID string) (*engine.Exe
 		return nil, fmt.Errorf("orchestrator: chargement projet %q: %w", projectID, err)
 	}
 
-	// 2. Créer l'entrée de run en base (status = pending)
-	run, err := s.jobRepo.Create(ctx, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("orchestrator: création run: %w", err)
+	var runID string
+
+	// 2. Créer l'entrée de run en base (si jobRepo disponible)
+	if s.jobRepo != nil {
+		run, createErr := s.jobRepo.Create(ctx, projectID)
+		if createErr != nil {
+			return nil, fmt.Errorf("orchestrator: création run: %w", createErr)
+		}
+		runID = run.ID
+		_ = s.jobRepo.SetStatus(ctx, runID, jobs.Running)
 	}
 
-	// 3. Passer en status "running"
-	if setErr := s.jobRepo.SetStatus(ctx, run.ID, jobs.Running); setErr != nil {
-		// Non-bloquant : on continue l'exécution même si la mise à jour échoue
-		_ = setErr
-	}
-
-	// 4. Exécuter le DAG
+	// 3. Exécuter le DAG
 	report, execErr := s.executor.Execute(ctx, project)
 
-	// 5. Persister le statut final
-	finalStatus := jobs.Succeeded
-	if execErr != nil {
-		finalStatus = jobs.Failed
-	}
-	if setErr := s.jobRepo.SetStatus(ctx, run.ID, finalStatus); setErr != nil {
-		// Logguer mais ne pas masquer l'erreur d'exécution principale
-		_ = setErr
+	// 4. Persister le statut final
+	if s.jobRepo != nil && runID != "" {
+		finalStatus := jobs.Succeeded
+		if execErr != nil {
+			finalStatus = jobs.Failed
+		}
+		_ = s.jobRepo.SetStatus(ctx, runID, finalStatus)
 	}
 
 	if execErr != nil {
-		return report, fmt.Errorf("orchestrator: exécution projet %q (run %s): %w", projectID, run.ID, execErr)
+		return report, fmt.Errorf("orchestrator: exécution projet %q: %w", projectID, execErr)
 	}
 	return report, nil
 }
 
 // CancelRun marque un run comme annulé.
 func (s *Service) CancelRun(ctx context.Context, runID string) error {
+	if s.jobRepo == nil {
+		return fmt.Errorf("orchestrator: jobRepo non disponible (Sprint C)")
+	}
 	if err := s.jobRepo.SetStatus(ctx, runID, jobs.Cancelled); err != nil {
 		return fmt.Errorf("orchestrator: annulation run %q: %w", runID, err)
 	}
@@ -76,6 +80,9 @@ func (s *Service) CancelRun(ctx context.Context, runID string) error {
 
 // GetRunStatus retourne le run courant depuis la base.
 func (s *Service) GetRunStatus(ctx context.Context, runID string) (*jobs.Run, error) {
+	if s.jobRepo == nil {
+		return nil, fmt.Errorf("orchestrator: jobRepo non disponible (Sprint C)")
+	}
 	run, err := s.jobRepo.GetByID(ctx, runID)
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator: récupération run %q: %w", runID, err)
@@ -85,6 +92,9 @@ func (s *Service) GetRunStatus(ctx context.Context, runID string) (*jobs.Run, er
 
 // ListRuns retourne tous les runs d'un projet.
 func (s *Service) ListRuns(ctx context.Context, projectID string) ([]jobs.Run, error) {
+	if s.jobRepo == nil {
+		return []jobs.Run{}, nil
+	}
 	runs, err := s.jobRepo.ListByProject(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator: liste runs projet %q: %w", projectID, err)
