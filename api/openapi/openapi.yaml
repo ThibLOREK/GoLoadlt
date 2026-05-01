@@ -1,0 +1,768 @@
+openapi: "3.1.0"
+info:
+  title: GoLoadIt API
+  version: "1.0.0"
+  description: |
+    API de pilotage de la plateforme ETL GoLoadIt.
+    Gère les projets XML, les runs d'exécution, les connexions multi-env
+    et le switch global d'environnement.
+
+servers:
+  - url: http://localhost:8090/api/v1
+    description: Développement local
+
+tags:
+  - name: projects
+    description: CRUD projets ETL (persistance XML)
+  - name: runs
+    description: Lancement, suivi et historique des exécutions
+  - name: connections
+    description: CRUD connexions réutilisables multi-environnements
+  - name: environment
+    description: Switch global d'environnement (dev / preprod / prod)
+
+paths:
+  /projects:
+    get:
+      tags: [projects]
+      summary: Liste tous les projets
+      operationId: listProjects
+      responses:
+        "200":
+          description: Liste paginée des projets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectListResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [projects]
+      summary: Crée un nouveau projet (génère le fichier XML)
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectCreateRequest"
+      responses:
+        "201":
+          description: Projet créé
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /projects/import:
+    post:
+      tags: [projects]
+      summary: Import d'un projet depuis un fichier XML
+      operationId: importProject
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: Projet importé
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /projects/{projectID}:
+    parameters:
+      - name: projectID
+        in: path
+        required: true
+        description: Identifiant unique du projet (UUID)
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [projects]
+      summary: Charge un projet (parse le XML)
+      operationId: getProject
+      responses:
+        "200":
+          description: Projet chargé
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [projects]
+      summary: Met à jour le graphe (sérialise XML + archive history/)
+      operationId: updateProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectUpdateRequest"
+      responses:
+        "200":
+          description: Projet mis à jour
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [projects]
+      summary: Supprime le projet et ses fichiers XML
+      operationId: deleteProject
+      responses:
+        "204":
+          description: Projet supprimé
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /projects/{projectID}/run:
+    parameters:
+      - name: projectID
+        in: path
+        required: true
+        description: Identifiant unique du projet (UUID)
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [projects]
+      summary: Exécution synchrone directe du projet (sans orchestrateur)
+      operationId: runProjectDirect
+      responses:
+        "200":
+          description: Résultat d'exécution synchrone
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /projects/{projectID}/runs:
+    parameters:
+      - name: projectID
+        in: path
+        required: true
+        description: Identifiant unique du projet (UUID)
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [runs]
+      summary: Lance un run du projet via l'orchestrateur
+      operationId: startRun
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunRequest"
+      responses:
+        "201":
+          description: Run lancé
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [runs]
+      summary: Historique des runs du projet
+      operationId: listRuns
+      responses:
+        "200":
+          description: Liste des runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RunSummary"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /projects/{projectID}/xml:
+    parameters:
+      - name: projectID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [projects]
+      summary: Export brut du fichier XML du projet
+      operationId: exportProjectXML
+      responses:
+        "200":
+          description: Fichier XML
+          content:
+            application/xml:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{projectID}/csv-preview:
+    parameters:
+      - name: projectID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [projects]
+      summary: Prévisualisation CSV des résultats d'un bloc source
+      operationId: csvPreview
+      responses:
+        "200":
+          description: Aperçu des données
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{projectID}/csv-scan:
+    parameters:
+      - name: projectID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [projects]
+      summary: Scan CSV complet
+      operationId: csvScan
+      responses:
+        "200":
+          description: Résultat du scan
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /runs/{runID}:
+    parameters:
+      - name: runID
+        in: path
+        required: true
+        description: Identifiant unique du run (UUID)
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [runs]
+      summary: Détail d'un run
+      operationId: getRun
+      responses:
+        "200":
+          description: Run trouvé
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunSummary"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [runs]
+      summary: Annule un run en cours
+      operationId: cancelRun
+      responses:
+        "204":
+          description: Run annulé
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /runs/{runID}/logs:
+    parameters:
+      - name: runID
+        in: path
+        required: true
+        description: Identifiant unique du run (UUID)
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [runs]
+      summary: Logs structurés du run (par bloc)
+      operationId: getRunLogs
+      responses:
+        "200":
+          description: Entrées de log
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RunLogEntry"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /runs/{runID}/report:
+    parameters:
+      - name: runID
+        in: path
+        required: true
+        description: Identifiant unique du run (UUID)
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [runs]
+      summary: ExecutionReport complet (lignes in/out, durée par bloc)
+      operationId: getRunReport
+      responses:
+        "200":
+          description: Rapport d'exécution complet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionReport"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /connections:
+    get:
+      tags: [connections]
+      summary: Liste toutes les connexions
+      operationId: listConnections
+      responses:
+        "200":
+          description: Liste des connexions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConnectionResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [connections]
+      summary: Crée une connexion (écrit le XML)
+      operationId: createConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionRequest"
+      responses:
+        "201":
+          description: Connexion créée
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /connections/{connID}:
+    parameters:
+      - name: connID
+        in: path
+        required: true
+        description: Identifiant unique de la connexion
+        schema:
+          type: string
+    get:
+      tags: [connections]
+      summary: Charge une connexion
+      operationId: getConnection
+      responses:
+        "200":
+          description: Connexion chargée
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [connections]
+      summary: Met à jour une connexion
+      operationId: updateConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionRequest"
+      responses:
+        "200":
+          description: Connexion mise à jour
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [connections]
+      summary: Supprime une connexion
+      operationId: deleteConnection
+      responses:
+        "204":
+          description: Connexion supprimée
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /connections/{connID}/test:
+    parameters:
+      - name: connID
+        in: path
+        required: true
+        description: Identifiant unique de la connexion
+        schema:
+          type: string
+    post:
+      tags: [connections]
+      summary: Teste la connexion sur l'environnement actif
+      operationId: testConnection
+      responses:
+        "200":
+          description: Connexion réussie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestConnectionResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: Connexion échouée (détail dans le body)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /environment:
+    get:
+      tags: [environment]
+      summary: Retourne l'environnement actif
+      operationId: getEnvironment
+      responses:
+        "200":
+          description: Environnement actif
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvironmentResponse"
+    put:
+      tags: [environment]
+      summary: Switch global d'environnement
+      operationId: setEnvironment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnvironmentRequest"
+      responses:
+        "200":
+          description: Switch effectué
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvironmentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /catalogue:
+    get:
+      tags: [projects]
+      summary: Catalogue des types de blocs disponibles
+      operationId: getCatalogue
+      responses:
+        "200":
+          description: Liste des blocs disponibles
+
+components:
+  schemas:
+    ProjectCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Nom du projet
+          example: "Mon projet ETL"
+        description:
+          type: string
+          description: Description optionnelle
+
+    ProjectUpdateRequest:
+      type: object
+      required: [project]
+      properties:
+        project:
+          type: object
+          description: Graphe DAG complet (nodes + edges + params)
+
+    ProjectResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identifiant unique du projet
+        name:
+          type: string
+        description:
+          type: string
+        xmlPath:
+          type: string
+          description: Chemin vers le fichier XML sur le serveur
+        sha256:
+          type: string
+          description: Empreinte SHA256 du fichier XML
+        updatedAt:
+          type: string
+          format: date-time
+        runCount:
+          type: integer
+          description: Nombre de runs effectués
+        lastStatus:
+          type: string
+          enum: [succeeded, failed, running, pending]
+          description: Statut du dernier run
+
+    ProjectListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectResponse"
+        total:
+          type: integer
+          description: Nombre total de projets
+
+    RunRequest:
+      type: object
+      properties:
+        env:
+          type: string
+          description: Override d'environnement pour ce run uniquement
+          enum: [dev, preprod, prod]
+
+    RunResponse:
+      type: object
+      properties:
+        runId:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, cancelled]
+        startedAt:
+          type: string
+          format: date-time
+        report:
+          $ref: "#/components/schemas/ExecutionReport"
+
+    RunSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, cancelled]
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    RunLogEntry:
+      type: object
+      properties:
+        runId:
+          type: string
+          format: uuid
+        blockId:
+          type: string
+        blockType:
+          type: string
+        level:
+          type: string
+          enum: [info, warn, error]
+        message:
+          type: string
+        rowsIn:
+          type: integer
+          format: int64
+        rowsOut:
+          type: integer
+          format: int64
+        timestamp:
+          type: string
+          format: date-time
+
+    ExecutionReport:
+      type: object
+      description: Rapport d'exécution complet produit par engine.Executor
+      properties:
+        success:
+          type: boolean
+        durationMs:
+          type: integer
+          format: int64
+          description: Durée totale en millisecondes
+        blocks:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlockReport"
+
+    BlockReport:
+      type: object
+      description: Résultats par bloc
+      properties:
+        blockId:
+          type: string
+        blockType:
+          type: string
+        rowsIn:
+          type: integer
+          format: int64
+        rowsOut:
+          type: integer
+          format: int64
+        durationMs:
+          type: integer
+          format: int64
+        error:
+          type: string
+          nullable: true
+
+    ConnectionRequest:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+          description: Nom de la connexion
+        type:
+          type: string
+          description: Type de driver (postgres, mysql, csv, etc.)
+          example: postgres
+        envs:
+          type: object
+          description: Paramètres par environnement (dev/preprod/prod)
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: string
+
+    ConnectionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        envs:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: string
+
+    TestConnectionResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        latencyMs:
+          type: integer
+
+    EnvironmentRequest:
+      type: object
+      required: [env]
+      properties:
+        env:
+          type: string
+          enum: [dev, preprod, prod]
+          description: Environnement cible
+
+    EnvironmentResponse:
+      type: object
+      properties:
+        activeEnv:
+          type: string
+          enum: [dev, preprod, prod]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Requête invalide
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Ressource introuvable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Erreur interne du serveur
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
