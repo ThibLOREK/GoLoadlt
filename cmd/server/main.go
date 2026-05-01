@@ -45,14 +45,13 @@ func main() {
 
 	// Instancier l'Executor et l'Orchestrateur.
 	// jobRepo est nil jusqu'à Sprint C (implémentation PostgreSQL + migration 005).
-	// L'orchestrateur gère gracieusement un jobRepo nil en ne persistant pas les statuts.
 	exec := engine.NewExecutor(log.Logger, activeEnv)
-	orch := orchestrator.NewService(exec, projectStore.XMLStore(), nil)
+	orch := orchestrator.NewService(exec, projectStore, nil)
 
 	// RunHandler : jobRepo nil — GetLogs et GetReport retourneront 501 jusqu'à Sprint C.
 	rh := handlers.NewRunHandler(orch, nil, log.Logger)
 
-	// Construire le routeur via NewRouter (remplace le routeur inline précédent).
+	// Construire le routeur.
 	r := handlers.NewRouter(log.Logger, projectStore, connManager, rh)
 
 	srv := &http.Server{Addr: addr, Handler: r}
