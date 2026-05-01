@@ -5,6 +5,7 @@ import { useNodeValidation } from '@/hooks/useNodeValidation'
 import { X, Trash2, AlertTriangle, CheckCircle2, FolderOpen, RefreshCcw, Eye, Sparkles, Plus, Minus, GripVertical } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Badge from '@/components/ui/Badge'
+import ConnectionRefSelect from '@/components/connections/ConnectionRefSelect'
 
 interface Props {
   nodeId: string
@@ -545,16 +546,14 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
           </div>
         )}
 
-        {/* Connexion DB pour les blocs SQL */}
+        {/* Connexion DB pour les blocs SQL — sélecteur ConnectionRefSelect */}
         {needsConnRef(node.data.blockType as string) && (
           <Field label="Connexion" required>
-            <input
-              className={inputCls(!params.connRef)}
+            <ConnectionRefSelect
+              blockType={node.data.blockType as string}
               value={params.connRef ?? ''}
-              placeholder="my-postgres-conn"
-              onChange={e => updateParam(nodeId, 'connRef', e.target.value, setNodes)}
+              onChange={v => updateParam(nodeId, 'connRef', v, setNodes)}
             />
-            <p className="mt-1 text-[11px] text-gray-500">Nom de la connexion déclarée dans le projet.</p>
           </Field>
         )}
 
