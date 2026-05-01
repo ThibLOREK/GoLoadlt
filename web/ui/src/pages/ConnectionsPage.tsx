@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Plus, Trash2, Zap } from 'lucide-react'
 import { listConnections, createConnection, deleteConnection, testConnection, switchEnvironment, getEnvironment } from '@/api/client'
 import type { Connection } from '@/types/api'
@@ -8,7 +9,18 @@ import Modal from '@/components/ui/Modal'
 const DB_TYPES = ['postgres', 'mysql', 'mssql', 'rest']
 const ENVS = ['dev', 'preprod', 'prod']
 
+/** Compte le nombre de profils d'env non vides (host présent) parmi les 3 standard. */
+function countConfiguredProfiles(c: Connection): number {
+  return ENVS.filter(env => Boolean(c.envs?.[env]?.host?.trim())).length
+}
+
+/** Retourne true si la connexion possède un profil configuré pour l'env donné. */
+function hasProfileForEnv(c: Connection, env: string): boolean {
+  return Boolean(c.envs?.[env]?.host?.trim())
+}
+
 export default function ConnectionsPage() {
+  const navigate = useNavigate()
   const [connections, setConnections] = useState<Connection[]>([])
   const [activeEnv, setActiveEnvState] = useState('dev')
   const [showCreate, setShowCreate] = useState(false)
@@ -18,14 +30,13 @@ export default function ConnectionsPage() {
 
   const load = () => {
     listConnections().then(setConnections).catch(console.error)
-    getEnvironment().then((r: any) => { setActiveEnvState(r.activeEnv); localStorage.setItem('activeEnv', r.activeEnv) })
+    getEnvironment().then((r: { activeEnv: string }) => { setActiveEnvState(r.activeEnv) })
   }
   useEffect(() => { load() }, [])
 
   const handleSwitchEnv = async (env: string) => {
     await switchEnvironment(env)
     setActiveEnvState(env)
-    localStorage.setItem('activeEnv', env)
   }
 
   const handleCreate = async () => {
@@ -36,14 +47,22 @@ export default function ConnectionsPage() {
     load()
   }
 
-  const handleTest = async (id: string) => {
+  const handleTest = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
     try {
-      const r = await testConnection(id) as any
+      const r = await testConnection(id) as { type: string; host: string; db: string; env: string }
       setTestMsg(`✅ ${r.type} — ${r.host}/${r.db} [${r.env}]`)
-    } catch (e: any) {
-      setTestMsg(`❌ ${e.response?.data?.error ?? e.message}`)
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: string } }; message?: string }
+      setTestMsg(`❌ ${axiosErr.response?.data?.error ?? axiosErr.message ?? 'Erreur inconnue'}`)
     }
     setTimeout(() => setTestMsg(null), 5000)
+  }
+
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    await deleteConnection(id)
+    load()
   }
 
   return (
@@ -75,25 +94,47 @@ export default function ConnectionsPage() {
       {testMsg && <div className="mb-4 px-4 py-2 bg-gray-800 rounded-lg text-sm">{testMsg}</div>}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {connections.map(c => (
-          <div key={c.id} className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="font-semibold text-gray-100">{c.name}</h2>
-              <span className="text-xs font-mono text-gray-500 bg-gray-800 px-2 py-0.5 rounded">{c.type}</span>
+        {connections.map(c => {
+          const profileCount = countConfiguredProfiles(c)
+          const canTest = hasProfileForEnv(c, activeEnv)
+          return (
+            <div
+              key={c.id}
+              onClick={() => navigate(`/connections/${c.id}`)}
+              className="bg-gray-900 border border-gray-800 rounded-xl p-5 cursor-pointer hover:border-gray-600 transition-colors"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="font-semibold text-gray-100">{c.name}</h2>
+                <span className="text-xs font-mono text-gray-500 bg-gray-800 px-2 py-0.5 rounded">{c.type}</span>
+              </div>
+              <div className="text-xs text-gray-600 mb-4">
+                {profileCount === 0
+                  ? 'Aucun profil configuré'
+                  : `${profileCount} profil${profileCount > 1 ? 's' : ''} configuré${profileCount > 1 ? 's' : ''}`
+                }
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={!canTest}
+                  onClick={e => handleTest(e, c.id)}
+                  title={canTest ? undefined : `Aucun profil pour l'env ${activeEnv}`}
+                >
+                  <Zap size={13} /> Tester
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={e => handleDelete(e, c.id)}
+                  className="ml-auto"
+                >
+                  <Trash2 size={13} />
+                </Button>
+              </div>
             </div>
-            <div className="text-xs text-gray-600 mb-4">
-              Profils : {Object.keys(c.envs ?? {}).join(', ') || 'aucun'}
-            </div>
-            <div className="flex gap-2">
-              <Button size="sm" variant="ghost" onClick={() => handleTest(c.id)}>
-                <Zap size={13} /> Tester
-              </Button>
-              <Button size="sm" variant="danger" onClick={async () => { await deleteConnection(c.id); load() }} className="ml-auto">
-                <Trash2 size={13} />
-              </Button>
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {showCreate && (
