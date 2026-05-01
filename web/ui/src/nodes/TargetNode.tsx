@@ -1,61 +1,65 @@
 import { memo, useState } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
-import { Box, Typography, Select, MenuItem, TextField, Divider, IconButton, Collapse } from "@mui/material";
-import SettingsIcon from "@mui/icons-material/Settings";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 
 export type TargetNodeData = {
-  targetType: "postgres" | "csv";
+  targetType: "postgres" | "csv" | "mysql" | "mssql";
   label: string;
   config: Record<string, unknown>;
   onChange?: (data: Partial<TargetNodeData>) => void;
 };
 
+const inputCls = "w-full px-2 py-1 mb-2 rounded bg-[#1a0a1a] border border-purple-900 text-white text-xs placeholder-purple-300/40 focus:outline-none focus:border-purple-400";
+const labelCls = "block text-[10px] text-purple-300 mb-0.5 uppercase tracking-wide";
+
 export default memo(function TargetNode({ data }: NodeProps<TargetNodeData>) {
   const [open, setOpen] = useState(false);
-  const { targetType = "postgres", config = {}, onChange } = data;
+  const { targetType = "postgres", config = {}, onChange } = data as TargetNodeData;
   const update = (key: string, value: unknown) => onChange?.({ config: { ...config, [key]: value } });
 
   return (
-    <Box sx={{ background: "#3a1e3a", border: "2px solid #9c27b0", borderRadius: 2, minWidth: 220, p: 1.5 }}>
+    <div className="rounded-lg p-3 min-w-[220px] border-2" style={{ background: "#3a1e3a", borderColor: "#9c27b0" }}>
       <Handle type="target" position={Position.Left} style={{ background: "#9c27b0" }} />
 
-      <Box display="flex" justifyContent="space-between" alignItems="center">
-        <Typography variant="caption" color="#ce93d8" fontWeight="bold">TARGET</Typography>
-        <IconButton size="small" onClick={() => setOpen(o => !o)} sx={{ color: "#ce93d8" }}>
-          <SettingsIcon fontSize="small" />
-        </IconButton>
-      </Box>
+      <div className="flex justify-between items-center mb-2">
+        <span className="text-xs font-bold text-purple-300 uppercase tracking-wider">⬛ TARGET</span>
+        <button onClick={() => setOpen(o => !o)} className="text-purple-300 hover:text-white text-xs px-1 transition-colors" title="Configurer">
+          {open ? "▲" : "⚙"}
+        </button>
+      </div>
 
-      <Select size="small" fullWidth value={targetType}
+      <select
+        value={targetType}
         onChange={e => onChange?.({ targetType: e.target.value as TargetNodeData["targetType"], config: {} })}
-        sx={{ mt: 0.5, mb: 1, bgcolor: "#1a0a1a", color: "white" }}>
-        <MenuItem value="postgres">PostgreSQL</MenuItem>
-        <MenuItem value="csv">CSV</MenuItem>
-      </Select>
+        className="w-full px-2 py-1 mb-2 rounded bg-[#1a0a1a] border border-purple-900 text-white text-xs focus:outline-none focus:border-purple-400"
+      >
+        <option value="postgres">PostgreSQL</option>
+        <option value="mysql">MySQL</option>
+        <option value="mssql">SQL Server</option>
+        <option value="csv">CSV</option>
+      </select>
 
-      <Collapse in={open}>
-        <Divider sx={{ mb: 1, borderColor: "#9c27b0" }} />
-        {targetType === "postgres" && (
-          <>
-            <TextField size="small" fullWidth label="Schéma" value={config.schema ?? "public"}
-              onChange={e => update("schema", e.target.value)} sx={inputSx} />
-            <TextField size="small" fullWidth label="Table" value={config.table_name ?? ""}
-              onChange={e => update("table_name", e.target.value)} sx={inputSx} />
-            <TextField size="small" fullWidth label="Taille batch" value={config.batch_size ?? 500}
-              onChange={e => update("batch_size", Number(e.target.value))} sx={inputSx} />
-          </>
-        )}
-        {targetType === "csv" && (
-          <>
-            <TextField size="small" fullWidth label="Chemin fichier" value={config.file_path ?? ""}
-              onChange={e => update("file_path", e.target.value)} sx={inputSx} />
-            <TextField size="small" fullWidth label="Délimiteur" value={config.delimiter ?? ","}
-              onChange={e => update("delimiter", e.target.value)} sx={inputSx} />
-          </>
-        )}
-      </Collapse>
-    </Box>
+      {open && (
+        <div className="border-t border-purple-900 pt-2 mt-1">
+          {(targetType === "postgres" || targetType === "mysql" || targetType === "mssql") && (
+            <>
+              <label className={labelCls}>Schéma</label>
+              <input className={inputCls} value={(config.schema as string) ?? "public"} onChange={e => update("schema", e.target.value)} />
+              <label className={labelCls}>Table</label>
+              <input className={inputCls} value={(config.table_name as string) ?? ""} onChange={e => update("table_name", e.target.value)} />
+              <label className={labelCls}>Taille batch</label>
+              <input type="number" className={inputCls} value={(config.batch_size as number) ?? 500} onChange={e => update("batch_size", Number(e.target.value))} />
+            </>
+          )}
+          {targetType === "csv" && (
+            <>
+              <label className={labelCls}>Chemin fichier</label>
+              <input className={inputCls} value={(config.file_path as string) ?? ""} onChange={e => update("file_path", e.target.value)} />
+              <label className={labelCls}>Délimiteur</label>
+              <input className={inputCls} value={(config.delimiter as string) ?? ","} onChange={e => update("delimiter", e.target.value)} />
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 });
-
-const inputSx = { mb: 1, "& input": { color: "white" }, "& label": { color: "#ce93d8" } };

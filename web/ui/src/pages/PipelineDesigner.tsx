@@ -1,12 +1,7 @@
 import { useCallback, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import ReactFlow, {
-  addEdge, Background, Controls, MiniMap,
-  useEdgesState, useNodesState, Connection, Node,
-} from "reactflow";
-import "reactflow/dist/style.css";
-import { Box, Typography, Paper, Stack, Button, TextField, Alert, Snackbar } from "@mui/material";
-import { useMutation } from "@tanstack/react-query";
+import { ReactFlow, addEdge, Background, Controls, MiniMap, useEdgesState, useNodesState, type Connection, type Node } from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import SourceNode, { SourceNodeData } from "../nodes/SourceNode";
 import TransformNode, { TransformNodeData } from "../nodes/TransformNode";
 import TargetNode, { TargetNodeData } from "../nodes/TargetNode";
@@ -45,7 +40,9 @@ export default function PipelineDesigner() {
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [error, setError] = useState("");
 
   const [sourceData, setSourceData] = useState<SourceNodeData>({ label: "Source", sourceType: "csv", config: {} });
   const [transformData, setTransformData] = useState<TransformNodeData>({ label: "Transform", steps: [] });
@@ -63,8 +60,10 @@ export default function PipelineDesigner() {
     [setEdges],
   );
 
-  const saveMutation = useMutation({
-    mutationFn: () => {
+  const handleSave = async () => {
+    setSaving(true);
+    setError("");
+    try {
       const payload = {
         name,
         description,
@@ -74,38 +73,83 @@ export default function PipelineDesigner() {
         target_config: targetData.config,
         steps: transformData.steps.map(s => ({ type: s.type, config: s.config })),
       };
-      return isNew ? pipelinesApi.create(payload) : pipelinesApi.update(id!, payload);
-    },
-    onSuccess: (pipeline) => {
+      const pipeline = isNew ? await pipelinesApi.create(payload) : await pipelinesApi.update(id!, payload);
       setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
       if (isNew) navigate(`/pipelines/${pipeline.id}/design`);
-    },
-  });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Erreur lors de la sauvegarde");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRun = async () => {
+    if (!id || isNew) return;
+    try {
+      await pipelinesApi.run(id);
+      navigate(`/pipelines/${id}/runs`);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Erreur lors du lancement");
+    }
+  };
 
   return (
-    <Box>
-      <Typography variant="h5" fontWeight="bold" mb={2}>
-        {isNew ? "Nouveau pipeline" : `Designer — ${name || id}`}
-      </Typography>
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <h2 className="text-lg font-bold text-white">
+          {isNew ? "Nouveau pipeline" : `Designer — ${name || id}`}
+        </h2>
+      </div>
 
-      <Stack direction="row" spacing={2} mb={2} alignItems="center" flexWrap="wrap">
-        <TextField label="Nom du pipeline" size="small" value={name}
-          onChange={e => setName(e.target.value)} sx={{ minWidth: 200 }} />
-        <TextField label="Description" size="small" value={description}
-          onChange={e => setDescription(e.target.value)} sx={{ minWidth: 280 }} />
-        <Button variant="contained" onClick={() => saveMutation.mutate()}
-          disabled={!name || saveMutation.isPending}>
-          {saveMutation.isPending ? "Sauvegarde…" : "Sauvegarder"}
-        </Button>
+      {/* Toolbar */}
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <input
+          type="text"
+          placeholder="Nom du pipeline"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          className="px-3 py-1.5 rounded bg-gray-800 border border-gray-600 text-white text-sm focus:outline-none focus:border-blue-400 min-w-[180px]"
+        />
+        <input
+          type="text"
+          placeholder="Description"
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          className="px-3 py-1.5 rounded bg-gray-800 border border-gray-600 text-white text-sm focus:outline-none focus:border-blue-400 min-w-[240px]"
+        />
+        <button
+          onClick={handleSave}
+          disabled={!name || saving}
+          className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+        >
+          {saving ? "Sauvegarde…" : "Sauvegarder"}
+        </button>
         {!isNew && (
-          <Button variant="outlined" color="success" onClick={() => pipelinesApi.run(id!)
-            .then(() => navigate(`/pipelines/${id}/runs`))}>
+          <button
+            onClick={handleRun}
+            className="px-4 py-1.5 rounded border border-green-500 text-green-400 hover:bg-green-900/30 text-sm font-medium transition-colors"
+          >
             ▶ Lancer
-          </Button>
+          </button>
         )}
-      </Stack>
+      </div>
 
-      <Paper sx={{ height: 520, position: "relative" }}>
+      {/* Feedback messages */}
+      {success && (
+        <div className="mb-2 px-3 py-2 rounded bg-green-900/40 border border-green-600 text-green-300 text-sm">
+          ✓ Pipeline sauvegardé !
+        </div>
+      )}
+      {error && (
+        <div className="mb-2 px-3 py-2 rounded bg-red-900/40 border border-red-600 text-red-300 text-sm">
+          ✗ {error}
+        </div>
+      )}
+
+      {/* ReactFlow canvas */}
+      <div className="flex-1 rounded overflow-hidden border border-gray-700" style={{ height: 520 }}>
         <ReactFlow
           nodes={nodes.map(n => ({
             ...n,
@@ -126,11 +170,7 @@ export default function PipelineDesigner() {
             n.type === "source" ? "#2196f3" : n.type === "transform" ? "#4caf50" : "#9c27b0"
           } />
         </ReactFlow>
-      </Paper>
-
-      <Snackbar open={success} autoHideDuration={3000} onClose={() => setSuccess(false)}>
-        <Alert severity="success">Pipeline sauvegardé !</Alert>
-      </Snackbar>
-    </Box>
+      </div>
+    </div>
   );
 }

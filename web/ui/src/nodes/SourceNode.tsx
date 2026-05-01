@@ -1,81 +1,80 @@
 import { memo, useState } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
-import {
-  Box, Typography, Select, MenuItem, TextField, Divider, IconButton, Collapse,
-} from "@mui/material";
-import SettingsIcon from "@mui/icons-material/Settings";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 
 export type SourceNodeData = {
-  sourceType: "csv" | "postgres" | "api";
+  sourceType: "csv" | "postgres" | "mysql" | "mssql" | "api";
   label: string;
   config: Record<string, unknown>;
   onChange?: (data: Partial<SourceNodeData>) => void;
 };
 
+const inputCls = "w-full px-2 py-1 mb-2 rounded bg-[#0d2137] border border-blue-900 text-white text-xs placeholder-blue-300/40 focus:outline-none focus:border-blue-400";
+const labelCls = "block text-[10px] text-blue-300 mb-0.5 uppercase tracking-wide";
+
 export default memo(function SourceNode({ data }: NodeProps<SourceNodeData>) {
   const [open, setOpen] = useState(false);
-  const { sourceType = "csv", config = {}, onChange } = data;
+  const { sourceType = "csv", config = {}, onChange } = data as SourceNodeData;
 
   const update = (key: string, value: unknown) =>
     onChange?.({ config: { ...config, [key]: value } });
 
   return (
-    <Box sx={{ background: "#1e3a5f", border: "2px solid #2196f3", borderRadius: 2, minWidth: 220, p: 1.5 }}>
-      <Box display="flex" justifyContent="space-between" alignItems="center">
-        <Typography variant="caption" color="#90caf9" fontWeight="bold">SOURCE</Typography>
-        <IconButton size="small" onClick={() => setOpen(o => !o)} sx={{ color: "#90caf9" }}>
-          <SettingsIcon fontSize="small" />
-        </IconButton>
-      </Box>
+    <div className="rounded-lg p-3 min-w-[220px] border-2" style={{ background: "#1e3a5f", borderColor: "#2196f3" }}>
+      <div className="flex justify-between items-center mb-2">
+        <span className="text-xs font-bold text-blue-300 uppercase tracking-wider">⬛ SOURCE</span>
+        <button onClick={() => setOpen(o => !o)} className="text-blue-300 hover:text-white text-xs px-1 transition-colors" title="Configurer">
+          {open ? "▲" : "⚙"}
+        </button>
+      </div>
 
-      <Select
-        size="small" fullWidth
+      <select
         value={sourceType}
         onChange={e => onChange?.({ sourceType: e.target.value as SourceNodeData["sourceType"], config: {} })}
-        sx={{ mt: 0.5, mb: 1, bgcolor: "#0d2137", color: "white" }}
+        className="w-full px-2 py-1 mb-2 rounded bg-[#0d2137] border border-blue-900 text-white text-xs focus:outline-none focus:border-blue-400"
       >
-        <MenuItem value="csv">CSV</MenuItem>
-        <MenuItem value="postgres">PostgreSQL</MenuItem>
-        <MenuItem value="api">API REST</MenuItem>
-      </Select>
+        <option value="csv">CSV</option>
+        <option value="postgres">PostgreSQL</option>
+        <option value="mysql">MySQL</option>
+        <option value="mssql">SQL Server</option>
+        <option value="api">API REST</option>
+      </select>
 
-      <Collapse in={open}>
-        <Divider sx={{ mb: 1, borderColor: "#2196f3" }} />
-        {sourceType === "csv" && (
-          <>
-            <TextField size="small" fullWidth label="Chemin fichier" value={config.file_path ?? ""}
-              onChange={e => update("file_path", e.target.value)} sx={inputSx} />
-            <TextField size="small" fullWidth label="Délimiteur" value={config.delimiter ?? ","}
-              onChange={e => update("delimiter", e.target.value)} sx={inputSx} />
-          </>
-        )}
-        {sourceType === "postgres" && (
-          <>
-            <TextField size="small" fullWidth label="DSN (optionnel)" value={config.dsn ?? ""}
-              onChange={e => update("dsn", e.target.value)} sx={inputSx} />
-            <TextField size="small" fullWidth label="Schéma" value={config.schema ?? "public"}
-              onChange={e => update("schema", e.target.value)} sx={inputSx} />
-            <TextField size="small" fullWidth label="Table" value={config.table_name ?? ""}
-              onChange={e => update("table_name", e.target.value)} sx={inputSx} />
-            <TextField size="small" fullWidth label="WHERE (optionnel)" value={config.where ?? ""}
-              onChange={e => update("where", e.target.value)} sx={inputSx} />
-          </>
-        )}
-        {sourceType === "api" && (
-          <>
-            <TextField size="small" fullWidth label="URL" value={config.url ?? ""}
-              onChange={e => update("url", e.target.value)} sx={inputSx} />
-            <TextField size="small" fullWidth label="Chemin données (ex: data)" value={config.data_path ?? ""}
-              onChange={e => update("data_path", e.target.value)} sx={inputSx} />
-            <TextField size="small" fullWidth label="Taille page" value={config.page_size ?? 100}
-              onChange={e => update("page_size", Number(e.target.value))} sx={inputSx} />
-          </>
-        )}
-      </Collapse>
+      {open && (
+        <div className="border-t border-blue-900 pt-2 mt-1">
+          {sourceType === "csv" && (
+            <>
+              <label className={labelCls}>Chemin fichier</label>
+              <input className={inputCls} value={(config.file_path as string) ?? ""} onChange={e => update("file_path", e.target.value)} />
+              <label className={labelCls}>Délimiteur</label>
+              <input className={inputCls} value={(config.delimiter as string) ?? ","} onChange={e => update("delimiter", e.target.value)} />
+            </>
+          )}
+          {(sourceType === "postgres" || sourceType === "mysql" || sourceType === "mssql") && (
+            <>
+              <label className={labelCls}>DSN (optionnel)</label>
+              <input className={inputCls} value={(config.dsn as string) ?? ""} onChange={e => update("dsn", e.target.value)} />
+              <label className={labelCls}>Schéma</label>
+              <input className={inputCls} value={(config.schema as string) ?? "public"} onChange={e => update("schema", e.target.value)} />
+              <label className={labelCls}>Table</label>
+              <input className={inputCls} value={(config.table_name as string) ?? ""} onChange={e => update("table_name", e.target.value)} />
+              <label className={labelCls}>WHERE (optionnel)</label>
+              <input className={inputCls} value={(config.where as string) ?? ""} onChange={e => update("where", e.target.value)} />
+            </>
+          )}
+          {sourceType === "api" && (
+            <>
+              <label className={labelCls}>URL</label>
+              <input className={inputCls} value={(config.url as string) ?? ""} onChange={e => update("url", e.target.value)} />
+              <label className={labelCls}>Chemin données (ex: data)</label>
+              <input className={inputCls} value={(config.data_path as string) ?? ""} onChange={e => update("data_path", e.target.value)} />
+              <label className={labelCls}>Taille page</label>
+              <input type="number" className={inputCls} value={(config.page_size as number) ?? 100} onChange={e => update("page_size", Number(e.target.value))} />
+            </>
+          )}
+        </div>
+      )}
 
       <Handle type="source" position={Position.Right} style={{ background: "#2196f3" }} />
-    </Box>
+    </div>
   );
 });
-
-const inputSx = { mb: 1, "& input": { color: "white" }, "& label": { color: "#90caf9" } };
