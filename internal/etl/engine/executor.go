@@ -156,14 +156,14 @@ func (e *Executor) Execute(ctx context.Context, project *contracts.Project) (*Ex
 		block := factory()
 
 		bctx := &contracts.BlockContext{
-			Ctx:       ctx,
-			Params:    node.ParamMap(),
-			ConnRef:   node.ConnRef,
-			ActiveEnv: e.ActiveEnv,
-			BlockID:   node.ID,
-			Preview:   preview,
-			Inputs:    incoming[node.ID],  // nil-safe : slice vide si source
-			Outputs:   outgoing[node.ID],  // nil-safe : slice vide si target
+			Ctx:           ctx,
+			Params:        node.ParamMap(),
+			ConnectionRef: node.ConnRef,
+			ActiveEnv:     e.ActiveEnv,
+			BlockID:       node.ID,
+			Preview:       preview,
+			Inputs:        incoming[node.ID],  // nil-safe : slice vide si source
+			Outputs:       outgoing[node.ID],  // nil-safe : slice vide si target
 		}
 
 		e.log.Info().
