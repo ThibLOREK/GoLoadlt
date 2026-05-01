@@ -402,9 +402,6 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
   const [scanInfo, setScanInfo] = useState<{ delimiter: string; encoding: string; hasHeader: boolean; detectedColumns: number; warnings?: string[] } | null>(null)
   if (!node) return null
 
-  const meta = catalogue.find((b: any) => b.type === node.data.blockType)
-  const params = (node.data.params ?? {}) as Record<string, string>
-
   const validationMap = useNodeValidation(nodes)
   const validation = validationMap.get(nodeId)
 
@@ -413,6 +410,11 @@ export default function NodeConfigPanel({ nodeId, nodes, setNodes }: Props) {
     const match = path.match(/projects\/([^/]+)/)
     return match?.[1] ?? 'local'
   }, [])
+
+  if (!node) return null
+
+  const meta = catalogue.find((b: any) => b.type === node.data.blockType)
+  const params = (node.data.params ?? {}) as Record<string, string>
 
   const handleDelete = () => {
     setNodes(nds => nds.filter(n => n.id !== nodeId))
