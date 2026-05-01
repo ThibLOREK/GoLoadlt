@@ -161,9 +161,9 @@ package orchestrator
 
 import (
     "context"
-    "github.com/rinjold/go-etl-studio/internal/etl/engine"
-    "github.com/rinjold/go-etl-studio/internal/xml/store"
-    "github.com/rinjold/go-etl-studio/internal/jobs"
+    "github.com/ThibLOREK/GoLoadlt/internal/etl/engine"
+    "github.com/ThibLOREK/GoLoadlt/internal/xml/store"
+    "github.com/ThibLOREK/GoLoadlt/internal/jobs"
 )
 
 type Service struct {
@@ -324,8 +324,8 @@ package transforms_test
 import (
     "context"
     "testing"
-    "github.com/rinjold/go-etl-studio/internal/etl/blocks/transforms"
-    "github.com/rinjold/go-etl-studio/internal/etl/contracts"
+    "github.com/ThibLOREK/GoLoadlt/internal/etl/blocks/transforms"
+    "github.com/ThibLOREK/GoLoadlt/internal/etl/contracts"
     "github.com/stretchr/testify/assert"
 )
 
