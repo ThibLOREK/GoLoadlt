@@ -13,7 +13,8 @@ import (
 
 // ProjectStore gère la persistance des fichiers XML de projets.
 // Structure : projectsDir/{projectID}/project.xml
-//             projectsDir/{projectID}/history/v{n}.xml
+//
+//	projectsDir/{projectID}/history/v{n}.xml
 type ProjectStore struct {
 	projectsDir string
 }
@@ -57,6 +58,32 @@ func (s *ProjectStore) Save(p *contracts.Project) error {
 func (s *ProjectStore) Load(projectID string) (*contracts.Project, error) {
 	path := filepath.Join(s.projectsDir, projectID, "project.xml")
 	return parser.ParseProjectFile(path)
+}
+
+// ListAll retourne tous les projets présents dans le répertoire.
+// Chaque sous-répertoire contenant un project.xml est inclus.
+// Les entrées illisibles sont silencieusement ignorées pour rester robuste.
+func (s *ProjectStore) ListAll() ([]*contracts.Project, error) {
+	entries, err := os.ReadDir(s.projectsDir)
+	if err != nil {
+		return nil, fmt.Errorf("store: lecture répertoire projets: %w", err)
+	}
+	var projects []*contracts.Project
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		xmlPath := filepath.Join(s.projectsDir, e.Name(), "project.xml")
+		if _, statErr := os.Stat(xmlPath); statErr != nil {
+			continue // répertoire sans project.xml — ignoré
+		}
+		p, parseErr := parser.ParseProjectFile(xmlPath)
+		if parseErr != nil {
+			continue // XML corrompu — ignoré pour ne pas bloquer la liste
+		}
+		projects = append(projects, p)
+	}
+	return projects, nil
 }
 
 // Delete supprime le répertoire d'un projet.
