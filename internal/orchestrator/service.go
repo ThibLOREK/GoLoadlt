@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ThibLOREK/GoLoadlt/internal/etl/engine"
-	"github.com/ThibLOREK/GoLoadlt/internal/jobs"
-	"github.com/ThibLOREK/GoLoadlt/internal/xml/store"
+	"github.com/rinjold/go-etl-studio/internal/etl/engine"
+	"github.com/rinjold/go-etl-studio/internal/jobs"
+	"github.com/rinjold/go-etl-studio/internal/xml/store"
 )
 
 // Service orchestre l'exécution des projets ETL.
